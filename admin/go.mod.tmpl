@@ -9,3 +9,6 @@ require (
 	gorm.io/driver/sqlite v1.5.5
 	gorm.io/gorm v1.26.1
 )
+[[ if .CoreReplace ]]
+replace github.com/yuWorm/fba-go => [[ .CoreReplace ]]
+[[ end ]]

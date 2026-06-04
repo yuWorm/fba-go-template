@@ -1,11 +1,10 @@
 TEMPLATE ?= admin
-FBA_GO_ROOT ?= ../fba-go
+VERIFY_ENV := $(if $(FBA_GO_ROOT),FBA_GO_ROOT=$(FBA_GO_ROOT),)
 
 .PHONY: verify
 verify:
-	FBA_GO_ROOT=$(FBA_GO_ROOT) scripts/verify-template.sh $(TEMPLATE)
+	$(VERIFY_ENV) scripts/verify-template.sh $(TEMPLATE)
 
 .PHONY: verify-admin
 verify-admin:
-	FBA_GO_ROOT=$(FBA_GO_ROOT) scripts/verify-template.sh admin
-
+	$(VERIFY_ENV) scripts/verify-template.sh admin

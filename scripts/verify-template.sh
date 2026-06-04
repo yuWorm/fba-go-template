@@ -4,8 +4,19 @@ set -euo pipefail
 template="${1:-admin}"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 template_dir="${root}/${template}"
-core_candidate="${FBA_GO_ROOT:-${root}/../fba-go}"
 generated_parent="${FBAGO_VERIFY_OUT:-}"
+backup_dir=""
+restore_template_module=0
+
+if [[ -n "${FBA_GO_ROOT:-}" ]]; then
+	core_candidate="${FBA_GO_ROOT}"
+elif [[ -d "${root}/../fba-go/cmd/fbago" ]]; then
+	core_candidate="${root}/../fba-go"
+else
+	# The template repo is commonly checked out as fba-go/templates/fba-go-template.
+	# In that submodule layout, the core checkout is two levels above the template root.
+	core_candidate="${root}/../.."
+fi
 
 if [[ ! -d "${template_dir}" ]]; then
 	echo "template ${template} does not exist under ${root}" >&2
@@ -35,24 +46,46 @@ fi
 export GOCACHE="${GOCACHE:-${root}/.cache/go-build}"
 
 cleanup() {
+	if [[ "${restore_template_module}" == "1" ]]; then
+		cp "${backup_dir}/go.mod" "${template_dir}/go.mod"
+		if [[ -f "${backup_dir}/go.sum" ]]; then
+			cp "${backup_dir}/go.sum" "${template_dir}/go.sum"
+		else
+			rm -f "${template_dir}/go.sum"
+		fi
+	fi
+	if [[ -n "${backup_dir:-}" ]]; then
+		rm -rf "${backup_dir}"
+	fi
 	if [[ -n "${generated_parent:-}" && "${keep_generated:-}" != "1" ]]; then
 		rm -rf "${generated_parent}"
 	fi
 }
 
+backup_template_module() {
+	backup_dir="$(mktemp -d)"
+	cp "${template_dir}/go.mod" "${backup_dir}/go.mod"
+	if [[ -f "${template_dir}/go.sum" ]]; then
+		cp "${template_dir}/go.sum" "${backup_dir}/go.sum"
+	fi
+	restore_template_module=1
+}
+
 if [[ -z "${generated_parent}" ]]; then
 	generated_parent="$(mktemp -d)"
-	trap cleanup EXIT
 else
 	mkdir -p "${generated_parent}"
 fi
+trap cleanup EXIT
 
 generated_dir="${generated_parent}/${template}-generated"
 rm -rf "${generated_dir}"
 
 echo "==> verifying template ${template}"
+backup_template_module
 (
 	cd "${template_dir}"
+	go mod edit -replace=github.com/yuWorm/fba-go="${core_root}"
 	make clean
 	make test
 	make build
@@ -68,9 +101,6 @@ echo "==> generating project from ${template}"
 echo "==> verifying generated project"
 (
 	cd "${generated_dir}"
-	# The template may target the next unreleased fba-go commit. Local verification
-	# pins the generated project to the checkout under test instead of the module proxy.
-	go mod edit -replace=github.com/yuWorm/fba-go="${core_root}"
 	make tidy
 	make test
 	make build
