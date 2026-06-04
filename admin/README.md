@@ -13,3 +13,5 @@ Generate a project from this template:
 fbago init github.com/your-org/my-backend --template /path/to/fba-go-template/admin
 fbago init github.com/your-org/my-backend --template github.com/your-org/fba-go-template/admin@v0.1.0
 ```
+
+From the repository root, run `make verify-admin` to test this template and a generated backend project end to end.

@@ -1,0 +1,31 @@
+name: Verify templates
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout templates
+        uses: actions/checkout@v4
+        with:
+          path: fba-go-template
+
+      - name: Checkout fba-go
+        uses: actions/checkout@v4
+        with:
+          repository: yuWorm/fba-go
+          path: fba-go
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: fba-go-template/admin/go.mod
+
+      - name: Verify templates
+        run: make verify
+        working-directory: fba-go-template
+        env:
+          FBA_GO_ROOT: ../fba-go
