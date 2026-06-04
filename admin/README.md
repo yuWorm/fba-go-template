@@ -2,6 +2,9 @@
 
 This is the runnable admin starter template for `fbago init`.
 
+Included project-owned app modules: `admin`, `config`, `dict`, and `notice`.
+Included reference plugins: `email`, `oauth2`, and `task`.
+
 ```bash
 go test ./...
 go run ./cmd/api
