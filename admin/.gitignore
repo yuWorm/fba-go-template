@@ -1,0 +1,5 @@
+/bin
+/.cache
+/tmp
+.env
+.env.local
