@@ -1,5 +1,7 @@
 set @system_menu_id = (select id from sys_menu where name = 'System');
 
+alter table sys_notice convert to character set utf8mb4 collate utf8mb4_unicode_ci;
+
 insert into sys_menu (title, name, path, sort, icon, type, component, perms, status, display, cache, link, remark, parent_id, created_time, updated_time)
 values ('notice.menu', 'PluginNotice', '/plugins/notice', 9, 'fe:notice-push', 1, '/plugins/notice/views/index', null, 1, 1, 1, '', null, @system_menu_id, now(), null);
 
