@@ -448,6 +448,28 @@ func TestLoginSwaggerMatchesPythonSchema(t *testing.T) {
 	assertUserInfoDetail(t, user)
 }
 
+func TestLogoutMatchesPythonTestAuthContract(t *testing.T) {
+	app := newAdminApp(t)
+	resp, body := requestJSON(t, app, "POST", "/api/v1/auth/login/swagger", "")
+	assertStatusOK(t, resp)
+	tokenType, ok := body["token_type"].(string)
+	if !ok || tokenType == "" {
+		t.Fatalf("token_type = %v, want non-empty string", body["token_type"])
+	}
+	accessToken, ok := body["access_token"].(string)
+	if !ok || accessToken == "" {
+		t.Fatalf("access_token = %v, want non-empty string", body["access_token"])
+	}
+
+	// Python's test_auth.py obtains token_headers from login/swagger and only
+	// asserts POST /auth/logout returns HTTP 200 with business code 200.
+	resp, body = requestJSONWithAuthorization(t, app, "POST", "/api/v1/auth/logout", "", tokenType+" "+accessToken)
+	assertStatusOK(t, resp)
+	if body["code"] != float64(200) {
+		t.Fatalf("code = %v, want 200; body = %v", body["code"], body)
+	}
+}
+
 func TestLoginMatchesPythonSchemaAndSetsRefreshCookie(t *testing.T) {
 	app := newAdminApp(t)
 	resp, body := requestJSON(t, app, "POST", "/api/v1/auth/login", `{"username":"admin","password":"admin","uuid":"fixture-captcha","captcha":"1234"}`)
