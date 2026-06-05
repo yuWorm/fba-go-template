@@ -10,7 +10,7 @@ Runnable project templates for `fbago init`.
 
 ```bash
 fbago init github.com/your-org/my-backend --template templates/fba-go-template/admin
-fbago init github.com/your-org/my-backend --template github.com/yuWorm/fba-go-template/admin@master
+fbago init github.com/your-org/my-backend --template github.com/yuWorm/fba-go-template/admin@v0.0.1
 ```
 
 ## Verification
