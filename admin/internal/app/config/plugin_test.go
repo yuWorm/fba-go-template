@@ -73,11 +73,14 @@ func TestConfigPluginRegistersMigrationAndAdminProvider(t *testing.T) {
 		t.Fatalf("Register() error = %v", err)
 	}
 
-	if len(ctx.Migrations()) != 1 {
-		t.Fatalf("migrations = %d, want 1", len(ctx.Migrations()))
+	if len(ctx.Migrations()) != 2 {
+		t.Fatalf("migrations = %d, want 2", len(ctx.Migrations()))
 	}
 	if ctx.Migrations()[0].Scope != "plugin:config" {
 		t.Fatalf("migration scope = %q, want plugin:config", ctx.Migrations()[0].Scope)
+	}
+	if ctx.Migrations()[1].Version != "0002" {
+		t.Fatalf("init migration version = %q, want 0002", ctx.Migrations()[1].Version)
 	}
 	var provider adminservice.AdminConfigProvider
 	if !ctx.Container().Resolve(&provider) {

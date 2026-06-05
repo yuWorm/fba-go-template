@@ -43,6 +43,9 @@ func (Module) Register(ctx plugin.Context) error {
 			if err := ctx.Migration(oauth2migration.AutoMigrate(provider)); err != nil {
 				return err
 			}
+			if err := ctx.Migration(oauth2migration.InitialData(provider)); err != nil {
+				return err
+			}
 		}
 	}
 

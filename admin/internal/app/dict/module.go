@@ -37,6 +37,9 @@ func (Module) Register(ctx plugin.Context) error {
 		if err := ctx.Migration(dictmigration.AutoMigrate(provider)); err != nil {
 			return err
 		}
+		if err := ctx.Migration(dictmigration.InitialData(provider)); err != nil {
+			return err
+		}
 	}
 
 	invalidator := service.CacheInvalidator(service.NoopInvalidator{})

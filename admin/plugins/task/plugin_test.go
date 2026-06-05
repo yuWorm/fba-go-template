@@ -125,11 +125,14 @@ func TestTaskPluginRegistersMigrationWhenDBProviderExists(t *testing.T) {
 	}
 
 	migrations := ctx.Migrations()
-	if len(migrations) != 1 {
-		t.Fatalf("migrations = %d, want 1", len(migrations))
+	if len(migrations) != 2 {
+		t.Fatalf("migrations = %d, want 2", len(migrations))
 	}
 	if migrations[0].Scope != "plugin:task" {
 		t.Fatalf("migration scope = %q, want plugin:task", migrations[0].Scope)
+	}
+	if migrations[1].Version != "0002" {
+		t.Fatalf("init migration version = %q, want 0002", migrations[1].Version)
 	}
 }
 

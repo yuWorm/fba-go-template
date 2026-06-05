@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	stderrors "errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mojocn/base64Captcha"
 	"github.com/redis/go-redis/v9"
 	"github.com/yuWorm/fba-go-template/admin/internal/app/admin/dto"
 	"github.com/yuWorm/fba-go-template/admin/internal/app/admin/model"
@@ -89,22 +89,49 @@ func (s *AuthService) Captcha(ctx context.Context) (dto.CaptchaDetail, error) {
 	if err != nil {
 		return dto.CaptchaDetail{}, err
 	}
+	image, code, err := newGraphicCaptcha()
+	if err != nil {
+		return dto.CaptchaDetail{}, err
+	}
 	uuid := "captcha-" + randomID()
 	if s.redis != nil {
-		if err := s.redis.Set(ctx, s.keys.LoginCaptcha(uuid), defaultCaptchaCode, cfg.CaptchaExpire).Err(); err != nil {
+		if err := s.redis.Set(ctx, s.keys.LoginCaptcha(uuid), code, cfg.CaptchaExpire).Err(); err != nil {
 			return dto.CaptchaDetail{}, err
 		}
 	} else {
 		s.mu.Lock()
-		s.captchas[uuid] = defaultCaptchaCode
+		s.captchas[uuid] = code
 		s.mu.Unlock()
 	}
 	return dto.CaptchaDetail{
 		IsEnabled:     cfg.CaptchaEnabled,
 		ExpireSeconds: int(cfg.CaptchaExpire.Seconds()),
 		UUID:          uuid,
-		Image:         "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte(defaultCaptchaCode)),
+		Image:         image,
 	}, nil
+}
+
+func newGraphicCaptcha() (string, string, error) {
+	driver := base64Captcha.NewDriverDigit(80, 240, 4, 0.7, 80)
+	_, content, code := driver.GenerateIdQuestionAnswer()
+	item, err := driver.DrawCaptcha(content)
+	if err != nil {
+		return "", "", err
+	}
+	image := rawCaptchaBase64(item.EncodeB64string())
+	if image == "" || code == "" {
+		return "", "", authError("验证码创建失败")
+	}
+	return image, code, nil
+}
+
+func rawCaptchaBase64(image string) string {
+	// base64Captcha returns a data URI, while the frontend adds that prefix
+	// itself. Keep only the base64 payload to match the Python API contract.
+	if _, raw, ok := strings.Cut(image, ","); ok {
+		return raw
+	}
+	return image
 }
 
 func (s *AuthService) Login(ctx context.Context, param dto.AuthLoginParam, meta RequestMetadata) (dto.LoginToken, string, error) {

@@ -43,6 +43,9 @@ func (Module) Register(ctx plugin.Context) error {
 		if err := ctx.Migration(taskmigration.AutoMigrate(provider)); err != nil {
 			return err
 		}
+		if err := ctx.Migration(taskmigration.InitialData(provider)); err != nil {
+			return err
+		}
 	}
 
 	executor := coretask.Runtime(coretask.NoopRuntime{})

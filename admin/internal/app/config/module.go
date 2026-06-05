@@ -41,6 +41,9 @@ func (Module) Register(ctx plugin.Context) error {
 			if err := ctx.Migration(configmigration.AutoMigrate(provider)); err != nil {
 				return err
 			}
+			if err := ctx.Migration(configmigration.InitialData(provider)); err != nil {
+				return err
+			}
 		}
 	}
 

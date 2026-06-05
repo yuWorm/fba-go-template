@@ -36,6 +36,9 @@ func (Module) Register(ctx plugin.Context) error {
 		if err := ctx.Migration(noticemigration.AutoMigrate(provider)); err != nil {
 			return err
 		}
+		if err := ctx.Migration(noticemigration.InitialData(provider)); err != nil {
+			return err
+		}
 	}
 
 	handler := noticeapi.NewHandler(service.New(repository))

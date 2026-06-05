@@ -41,6 +41,9 @@ func (Module) Register(ctx plugin.Context) error {
 		if err := ctx.Migration(adminmigration.PasswordSecurityMigration(provider)); err != nil {
 			return err
 		}
+		if err := ctx.Migration(adminmigration.InitialData(provider)); err != nil {
+			return err
+		}
 	}
 	var redisClient service.RedisClient
 	_ = ctx.Container().Resolve(&redisClient)

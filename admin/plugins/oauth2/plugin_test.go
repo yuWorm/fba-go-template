@@ -15,9 +15,11 @@ import (
 	oauth2plugin "github.com/yuWorm/fba-go-template/admin/plugins/oauth2"
 	"github.com/yuWorm/fba-go-template/admin/plugins/oauth2/repo"
 	"github.com/yuWorm/fba-go-template/admin/plugins/oauth2/service"
+	"github.com/yuWorm/fba-go/core/db"
 	"github.com/yuWorm/fba-go/core/di"
 	"github.com/yuWorm/fba-go/core/middleware"
 	"github.com/yuWorm/fba-go/core/plugin"
+	"gorm.io/gorm"
 )
 
 func TestOAuth2PluginRegistersPythonCompatibleRoutes(t *testing.T) {
@@ -51,6 +53,31 @@ func TestOAuth2PluginRegistersPythonCompatibleRoutes(t *testing.T) {
 		if route.AuthRequired != authRequired {
 			t.Fatalf("%s AuthRequired = %v, want %v", key, route.AuthRequired, authRequired)
 		}
+	}
+}
+
+func TestOAuth2PluginRegistersMigrationWhenDBProviderExists(t *testing.T) {
+	container := di.New()
+	if err := container.Provide(func() db.Provider {
+		return db.NewGORMProvider(&gorm.DB{}, nil)
+	}); err != nil {
+		t.Fatalf("Provide(db.Provider) error = %v", err)
+	}
+	ctx := plugin.NewContext(plugin.ContextOptions{Container: container})
+
+	if err := oauth2plugin.FBAPlugin().Register(ctx); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	migrations := ctx.Migrations()
+	if len(migrations) != 2 {
+		t.Fatalf("migrations = %d, want 2", len(migrations))
+	}
+	if migrations[0].Scope != "plugin:oauth2" {
+		t.Fatalf("migration scope = %q, want plugin:oauth2", migrations[0].Scope)
+	}
+	if migrations[1].Version != "2026060302" {
+		t.Fatalf("init migration version = %q, want 2026060302", migrations[1].Version)
 	}
 }
 

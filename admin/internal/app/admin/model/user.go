@@ -9,6 +9,7 @@ type User struct {
 	Username                string     `gorm:"column:username;size:64;index"`
 	Nickname                string     `gorm:"column:nickname;size:64"`
 	Password                string     `gorm:"column:password;size:256"`
+	Salt                    []byte     `gorm:"column:salt"`
 	Avatar                  *string    `gorm:"column:avatar;size:256"`
 	Email                   *string    `gorm:"column:email;size:256;index"`
 	Phone                   *string    `gorm:"column:phone;size:32"`
@@ -20,6 +21,8 @@ type User struct {
 	JoinTime                time.Time  `gorm:"column:join_time;autoCreateTime"`
 	LastLoginTime           *time.Time `gorm:"column:last_login_time"`
 	LastPasswordChangedTime *time.Time `gorm:"column:last_password_changed_time"`
+	CreatedTime             time.Time  `gorm:"column:created_time;autoCreateTime"`
+	UpdatedTime             *time.Time `gorm:"column:updated_time;autoUpdateTime"`
 	DeletedTime             *time.Time `gorm:"column:deleted_time;index"`
 }
 

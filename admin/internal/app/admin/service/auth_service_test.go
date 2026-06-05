@@ -1,9 +1,12 @@
 package service_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"image/png"
 	"net/http"
 	"strings"
 	"sync"
@@ -95,8 +98,8 @@ func TestLoginCaptchaAndLockUseRedisWhenAvailable(t *testing.T) {
 		t.Fatalf("Captcha() error = %v", err)
 	}
 	code, ok := redisClient.value("fba:login:captcha:" + captcha.UUID)
-	if !ok || code != "1234" {
-		t.Fatalf("redis captcha = %q ok %v, want 1234 true", code, ok)
+	if !ok || !isDigitCode(code, 4) {
+		t.Fatalf("redis captcha = %q ok %v, want 4-digit code true", code, ok)
 	}
 
 	for i := 0; i < 2; i++ {
@@ -112,6 +115,49 @@ func TestLoginCaptchaAndLockUseRedisWhenAvailable(t *testing.T) {
 	}
 	if _, ok := redisClient.value("fba:user:lock:1"); !ok {
 		t.Fatal("redis user lock key missing after threshold is reached")
+	}
+}
+
+func TestCaptchaReturnsPureBase64PNGAndStoresGeneratedCode(t *testing.T) {
+	ctx := context.Background()
+	redisClient := newFakeAdminRedis()
+	authService := service.NewAuthServiceWithOptions(repo.NewMemoryRepository(repo.SeedData()), service.AuthServiceOptions{
+		Redis: redisClient,
+		ConfigProvider: service.StaticAdminConfigProvider{
+			Login: service.LoginConfig{CaptchaEnabled: true, CaptchaExpire: 5 * time.Minute},
+		},
+	})
+
+	captcha, err := authService.Captcha(ctx)
+	if err != nil {
+		t.Fatalf("Captcha() error = %v", err)
+	}
+	if strings.HasPrefix(captcha.Image, "data:") {
+		t.Fatalf("captcha image has data URI prefix, want pure base64")
+	}
+	raw, err := base64.StdEncoding.DecodeString(captcha.Image)
+	if err != nil {
+		t.Fatalf("captcha image is not valid base64: %v", err)
+	}
+	if _, err := png.Decode(bytes.NewReader(raw)); err != nil {
+		t.Fatalf("captcha image is not a PNG: %v", err)
+	}
+	code, ok := redisClient.value("fba:login:captcha:" + captcha.UUID)
+	if !ok || !isDigitCode(code, 4) {
+		t.Fatalf("redis captcha = %q ok %v, want generated 4-digit code true", code, ok)
+	}
+
+	_, _, err = authService.Login(ctx, dto.AuthLoginParam{
+		Username: "admin",
+		Password: "admin",
+		UUID:     captcha.UUID,
+		Captcha:  code,
+	}, service.RequestMetadata{})
+	if err != nil {
+		t.Fatalf("Login() error = %v, want generated captcha code to verify", err)
+	}
+	if _, ok := redisClient.value("fba:login:captcha:" + captcha.UUID); ok {
+		t.Fatal("redis captcha key still exists after successful login")
 	}
 }
 
@@ -309,4 +355,16 @@ func valueString(value any) string {
 	default:
 		return fmt.Sprint(typed)
 	}
+}
+
+func isDigitCode(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }

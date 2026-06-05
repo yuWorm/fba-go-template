@@ -3,6 +3,7 @@ package admin_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -10,10 +11,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/redis/go-redis/v9"
 	admin "github.com/yuWorm/fba-go-template/admin/internal/app/admin"
 	adminapi "github.com/yuWorm/fba-go-template/admin/internal/app/admin/api"
 	adminmodel "github.com/yuWorm/fba-go-template/admin/internal/app/admin/model"
@@ -215,8 +218,8 @@ func TestAdminPluginRegistersMigrationWhenDBProviderExists(t *testing.T) {
 	}
 
 	migrations := ctx.Migrations()
-	if len(migrations) != 2 {
-		t.Fatalf("migrations = %d, want 2", len(migrations))
+	if len(migrations) != 3 {
+		t.Fatalf("migrations = %d, want 3", len(migrations))
 	}
 	versions := map[string]bool{}
 	for _, migration := range migrations {
@@ -225,8 +228,8 @@ func TestAdminPluginRegistersMigrationWhenDBProviderExists(t *testing.T) {
 		}
 		versions[migration.Version] = true
 	}
-	if !versions["0001"] || !versions["0002"] {
-		t.Fatalf("migration versions = %v, want 0001 and 0002", versions)
+	if !versions["0001"] || !versions["0002"] || !versions["0003"] {
+		t.Fatalf("migration versions = %v, want 0001, 0002 and 0003", versions)
 	}
 }
 
@@ -420,6 +423,13 @@ func TestCaptchaMatchesPythonSchema(t *testing.T) {
 	if data["uuid"] == "" {
 		t.Fatal("captcha uuid is empty")
 	}
+	image, ok := data["image"].(string)
+	if !ok || image == "" {
+		t.Fatalf("captcha image = %v, want non-empty string", data["image"])
+	}
+	if strings.HasPrefix(image, "data:") {
+		t.Fatal("captcha image has data URI prefix, want pure base64")
+	}
 }
 
 func TestLoginSwaggerMatchesPythonSchema(t *testing.T) {
@@ -454,17 +464,19 @@ func TestLoginMatchesPythonSchemaAndSetsRefreshCookie(t *testing.T) {
 }
 
 func TestLoginCaptchaMismatchDoesNotConsumeCaptcha(t *testing.T) {
-	app := newAdminApp(t)
+	redisClient := newFakeAdminPluginRedis()
+	app := newAdminAppWithRedis(t, redisClient)
 
 	resp, body := requestJSON(t, app, "GET", "/api/v1/auth/captcha", "")
 	assertStatusOK(t, resp)
 	captcha := assertEnvelopeMap(t, body)
 	uuid := captcha["uuid"].(string)
+	code := storedLoginCaptchaCode(t, redisClient, uuid)
 
-	resp, body = requestJSON(t, app, "POST", "/api/v1/auth/login", `{"username":"admin","password":"admin","uuid":"`+uuid+`","captcha":"0000"}`)
+	resp, body = requestJSON(t, app, "POST", "/api/v1/auth/login", `{"username":"admin","password":"admin","uuid":"`+uuid+`","captcha":"`+wrongCaptchaCode(code)+`"}`)
 	assertErrorEnvelope(t, resp, body, fiber.StatusUnauthorized, "验证码错误")
 
-	resp, body = requestJSON(t, app, "POST", "/api/v1/auth/login", `{"username":"admin","password":"admin","uuid":"`+uuid+`","captcha":"1234"}`)
+	resp, body = requestJSON(t, app, "POST", "/api/v1/auth/login", `{"username":"admin","password":"admin","uuid":"`+uuid+`","captcha":"`+code+`"}`)
 	assertStatusOK(t, resp)
 	data := assertEnvelopeMap(t, body)
 	user := assertMap(t, data["user"])
@@ -539,7 +551,8 @@ func TestLoginFailureLockoutMatchesPythonSecurityPolicy(t *testing.T) {
 }
 
 func TestAuthEndpointsAreStatefulAndValidateUsers(t *testing.T) {
-	app := newAdminApp(t)
+	redisClient := newFakeAdminPluginRedis()
+	app := newAdminAppWithRedis(t, redisClient)
 
 	resp, body := requestJSON(t, app, "GET", "/api/v1/auth/captcha", "")
 	assertStatusOK(t, resp)
@@ -550,6 +563,7 @@ func TestAuthEndpointsAreStatefulAndValidateUsers(t *testing.T) {
 	if captcha["image"] == "" {
 		t.Fatal("captcha image is empty")
 	}
+	code := storedLoginCaptchaCode(t, redisClient, captcha["uuid"].(string))
 
 	resp, body = requestJSON(t, app, "POST", "/api/v1/sys/users", `{"username":"auth_user","password":"secret","nickname":"Auth User","email":null,"phone":null,"dept_id":1,"roles":[1]}`)
 	assertStatusOK(t, resp)
@@ -559,7 +573,7 @@ func TestAuthEndpointsAreStatefulAndValidateUsers(t *testing.T) {
 	}
 	userID := int(createdUser["id"].(float64))
 
-	loginBody := `{"username":"auth_user","password":"secret","uuid":"` + captcha["uuid"].(string) + `","captcha":"1234"}`
+	loginBody := `{"username":"auth_user","password":"secret","uuid":"` + captcha["uuid"].(string) + `","captcha":"` + code + `"}`
 	resp, body = requestJSON(t, app, "POST", "/api/v1/auth/login", loginBody)
 	assertStatusOK(t, resp)
 	data := assertEnvelopeMap(t, body)
@@ -2414,6 +2428,26 @@ func newAdminApp(t *testing.T) *fiber.App {
 	return newAdminAppWithConfig(t, config.Options{})
 }
 
+func newAdminAppWithRedis(t *testing.T, redisClient adminservice.RedisClient) *fiber.App {
+	t.Helper()
+	app := fiber.New(fiber.Config{ErrorHandler: middleware.ErrorHandler})
+	container := di.New()
+	if err := container.Provide(func() adminservice.RedisClient {
+		return redisClient
+	}); err != nil {
+		t.Fatalf("Provide(RedisClient) error = %v", err)
+	}
+	ctx := plugin.NewContext(plugin.ContextOptions{
+		Container: container,
+		APIGroup:  app.Group("/api/v1"),
+	})
+	if err := admin.FBAPlugin().Register(ctx); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	registerRoutes(ctx.APIGroup(), ctx.Routes())
+	return app
+}
+
 func newAdminAppWithSeed(t *testing.T, seed adminmodel.Seed) *fiber.App {
 	t.Helper()
 	return newAdminAppWithRepository(t, adminrepo.NewMemoryRepository(seed))
@@ -2453,6 +2487,98 @@ func newAdminRuntimeApp(t *testing.T) *fiber.App {
 	}
 	plugin.MountRoutes(ctx.APIGroup(), ctx.Routes(), plugin.WithContainer(ctx.Container()))
 	return app
+}
+
+type fakeAdminPluginRedis struct {
+	mu     sync.Mutex
+	values map[string]string
+	info   string
+}
+
+func newFakeAdminPluginRedis() *fakeAdminPluginRedis {
+	return &fakeAdminPluginRedis{values: map[string]string{}}
+}
+
+func (r *fakeAdminPluginRedis) Get(_ context.Context, key string) *redis.StringCmd {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	value, ok := r.values[key]
+	if !ok {
+		return redis.NewStringResult("", redis.Nil)
+	}
+	return redis.NewStringResult(value, nil)
+}
+
+func (r *fakeAdminPluginRedis) Set(_ context.Context, key string, value any, _ time.Duration) *redis.StatusCmd {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.values[key] = fakeRedisValueString(value)
+	return redis.NewStatusResult("OK", nil)
+}
+
+func (r *fakeAdminPluginRedis) Del(_ context.Context, keys ...string) *redis.IntCmd {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var deleted int64
+	for _, key := range keys {
+		if _, ok := r.values[key]; ok {
+			deleted++
+			delete(r.values, key)
+		}
+	}
+	return redis.NewIntResult(deleted, nil)
+}
+
+func (r *fakeAdminPluginRedis) Incr(_ context.Context, key string) *redis.IntCmd {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var current int64
+	if raw := r.values[key]; raw != "" {
+		_, _ = fmt.Sscanf(raw, "%d", &current)
+	}
+	current++
+	r.values[key] = fmt.Sprintf("%d", current)
+	return redis.NewIntResult(current, nil)
+}
+
+func (r *fakeAdminPluginRedis) Expire(context.Context, string, time.Duration) *redis.BoolCmd {
+	return redis.NewBoolResult(true, nil)
+}
+
+func (r *fakeAdminPluginRedis) Info(context.Context, ...string) *redis.StringCmd {
+	return redis.NewStringResult(r.info, nil)
+}
+
+func (r *fakeAdminPluginRedis) value(key string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	value, ok := r.values[key]
+	return value, ok
+}
+
+func storedLoginCaptchaCode(t *testing.T, redisClient *fakeAdminPluginRedis, uuid string) string {
+	t.Helper()
+	code, ok := redisClient.value("fba:login:captcha:" + uuid)
+	if !ok {
+		t.Fatalf("login captcha redis key missing for uuid %q", uuid)
+	}
+	return code
+}
+
+func wrongCaptchaCode(code string) string {
+	if code == "0000" {
+		return "1111"
+	}
+	return "0000"
+}
+
+func fakeRedisValueString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	default:
+		return fmt.Sprint(typed)
+	}
 }
 
 func newAdminRuntimeAppWithRepository(t *testing.T, repository adminrepo.Repository) *fiber.App {
