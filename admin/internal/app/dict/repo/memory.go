@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 
@@ -132,13 +133,19 @@ func (r *MemoryRepository) DataByTypeCode(_ context.Context, code string) ([]mod
 	defer r.mu.RUnlock()
 	items := make([]model.DictData, 0, len(r.data))
 	for _, item := range r.data {
-		if item.TypeCode == code {
+		if item.TypeCode == code && item.Status == 1 {
 			items = append(items, item)
 		}
 	}
 	if len(items) == 0 {
 		return nil, ErrNotFound
 	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Sort == items[j].Sort {
+			return items[i].ID > items[j].ID
+		}
+		return items[i].Sort > items[j].Sort
+	})
 	return items, nil
 }
 

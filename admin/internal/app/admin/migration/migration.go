@@ -20,6 +20,15 @@ var postgresqlInitialDataSQL string
 //go:embed sql/sqlite/0003_initial_data.sql
 var sqliteInitialDataSQL string
 
+//go:embed sql/mysql/0004_user_deleted_default.sql
+var mysqlUserDeletedDefaultSQL string
+
+//go:embed sql/postgresql/0004_user_deleted_default.sql
+var postgresqlUserDeletedDefaultSQL string
+
+//go:embed sql/sqlite/0004_user_deleted_default.sql
+var sqliteUserDeletedDefaultSQL string
+
 func AutoMigrate(provider db.Provider) coremigration.Migration {
 	return coremigration.Migration{
 		Scope:    "plugin:admin",
@@ -59,6 +68,20 @@ func InitialData(provider db.Provider) coremigration.Migration {
 			MySQL:      mysqlInitialDataSQL,
 			PostgreSQL: postgresqlInitialDataSQL,
 			SQLite:     sqliteInitialDataSQL,
+		},
+	})
+}
+
+func UserDeletedDefaultMigration(provider db.Provider) coremigration.Migration {
+	return appmigration.SQLMigration(provider, appmigration.SQLMigrationOptions{
+		Scope:    "plugin:admin",
+		Version:  "0004",
+		Name:     "admin user deleted default",
+		Checksum: "sql:user-deleted-default:admin:0004",
+		Scripts: appmigration.SQLScripts{
+			MySQL:      mysqlUserDeletedDefaultSQL,
+			PostgreSQL: postgresqlUserDeletedDefaultSQL,
+			SQLite:     sqliteUserDeletedDefaultSQL,
 		},
 	})
 }

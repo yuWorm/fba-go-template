@@ -33,19 +33,19 @@ func TestDictPluginRegistersPythonCompatibleRoutes(t *testing.T) {
 		authRequired bool
 		permission   string
 	}{
-		"GET /dict-types/all":              {authRequired: true},
-		"GET /dict-types/:pk":              {authRequired: true},
-		"GET /dict-types":                  {authRequired: true},
-		"POST /dict-types":                 {authRequired: true, permission: "dict:type:add"},
-		"PUT /dict-types/:pk":              {authRequired: true, permission: "dict:type:edit"},
-		"DELETE /dict-types":               {authRequired: true, permission: "dict:type:del"},
-		"GET /dict-datas/all":              {authRequired: true},
-		"GET /dict-datas/:pk":              {authRequired: true},
-		"GET /dict-datas/type-codes/:code": {authRequired: true},
-		"GET /dict-datas":                  {authRequired: true},
-		"POST /dict-datas":                 {authRequired: true, permission: "dict:data:add"},
-		"PUT /dict-datas/:pk":              {authRequired: true, permission: "dict:data:edit"},
-		"DELETE /dict-datas":               {authRequired: true, permission: "dict:data:del"},
+		"GET /sys/dict-types/all":              {authRequired: true},
+		"GET /sys/dict-types/:pk":              {authRequired: true},
+		"GET /sys/dict-types":                  {authRequired: true},
+		"POST /sys/dict-types":                 {authRequired: true, permission: "dict:type:add"},
+		"PUT /sys/dict-types/:pk":              {authRequired: true, permission: "dict:type:edit"},
+		"DELETE /sys/dict-types":               {authRequired: true, permission: "dict:type:del"},
+		"GET /sys/dict-datas/all":              {authRequired: true},
+		"GET /sys/dict-datas/:pk":              {authRequired: true},
+		"GET /sys/dict-datas/type-codes/:code": {authRequired: true},
+		"GET /sys/dict-datas":                  {authRequired: true},
+		"POST /sys/dict-datas":                 {authRequired: true, permission: "dict:data:add"},
+		"PUT /sys/dict-datas/:pk":              {authRequired: true, permission: "dict:data:edit"},
+		"DELETE /sys/dict-datas":               {authRequired: true, permission: "dict:data:del"},
 	}
 
 	if len(got) != len(want) {
@@ -92,23 +92,33 @@ func TestDictPluginRegistersMigrationWhenDBProviderExists(t *testing.T) {
 
 func TestDictDataByTypeCodeMatchesPythonSchema(t *testing.T) {
 	app := newDictApp(t)
-	resp, body := requestJSON(t, app, "GET", "/api/v1/dict-datas/type-codes/sys_status", "")
+	for _, tc := range []struct {
+		code string
+		want int
+	}{
+		{code: "sys_status", want: 2},
+		{code: "sys_choose", want: 2},
+		{code: "task_strategy_type", want: 2},
+		{code: "task_period_type", want: 5},
+	} {
+		resp, body := requestJSON(t, app, "GET", "/api/v1/sys/dict-datas/type-codes/"+tc.code, "")
 
-	assertStatusOK(t, resp)
-	data := assertEnvelopeSlice(t, body)
-	if len(data) != 2 {
-		t.Fatalf("dict data count = %d, want 2", len(data))
-	}
-	item := assertMap(t, data[0])
-	assertDictDataDetail(t, item)
-	if item["type_code"] != "sys_status" {
-		t.Fatalf("type_code = %v, want sys_status", item["type_code"])
+		assertStatusOK(t, resp)
+		data := assertEnvelopeSlice(t, body)
+		if len(data) != tc.want {
+			t.Fatalf("%s dict data count = %d, want %d", tc.code, len(data), tc.want)
+		}
+		item := assertMap(t, data[0])
+		assertDictDataDetail(t, item)
+		if item["type_code"] != tc.code {
+			t.Fatalf("type_code = %v, want %s", item["type_code"], tc.code)
+		}
 	}
 }
 
 func TestDictTypesAllMatchesPythonSchema(t *testing.T) {
 	app := newDictApp(t)
-	resp, body := requestJSON(t, app, "GET", "/api/v1/dict-types/all", "")
+	resp, body := requestJSON(t, app, "GET", "/api/v1/sys/dict-types/all", "")
 
 	assertStatusOK(t, resp)
 	data := assertEnvelopeSlice(t, body)
@@ -125,8 +135,8 @@ func TestDictPaginatedEndpointsMatchPythonPageSchema(t *testing.T) {
 		itemTest  func(*testing.T, map[string]any)
 		baseRoute string
 	}{
-		{path: "/api/v1/dict-types", itemTest: assertDictTypeDetail, baseRoute: "/api/v1/dict-types"},
-		{path: "/api/v1/dict-datas", itemTest: assertDictDataDetail, baseRoute: "/api/v1/dict-datas"},
+		{path: "/api/v1/sys/dict-types", itemTest: assertDictTypeDetail, baseRoute: "/api/v1/sys/dict-types"},
+		{path: "/api/v1/sys/dict-datas", itemTest: assertDictDataDetail, baseRoute: "/api/v1/sys/dict-datas"},
 	} {
 		resp, body := requestJSON(t, app, "GET", tc.path, "")
 		assertStatusOK(t, resp)
@@ -151,12 +161,12 @@ func TestDictWriteEndpointsReturnPythonEnvelope(t *testing.T) {
 		path   string
 		body   string
 	}{
-		{"POST", "/api/v1/dict-types", `{"name":"fixture","code":"fixture","remark":null}`},
-		{"PUT", "/api/v1/dict-types/1", `{"name":"fixture","code":"fixture","remark":null}`},
-		{"DELETE", "/api/v1/dict-types", `{"pks":[1]}`},
-		{"POST", "/api/v1/dict-datas", `{"type_id":1,"label":"Fixture","value":"fixture","color":null,"sort":0,"status":1,"remark":null}`},
-		{"PUT", "/api/v1/dict-datas/1", `{"type_id":1,"label":"Fixture","value":"fixture","color":null,"sort":0,"status":1,"remark":null}`},
-		{"DELETE", "/api/v1/dict-datas", `{"pks":[1]}`},
+		{"POST", "/api/v1/sys/dict-types", `{"name":"fixture","code":"fixture","remark":null}`},
+		{"PUT", "/api/v1/sys/dict-types/1", `{"name":"fixture","code":"fixture","remark":null}`},
+		{"DELETE", "/api/v1/sys/dict-types", `{"pks":[1]}`},
+		{"POST", "/api/v1/sys/dict-datas", `{"type_id":1,"label":"Fixture","value":"fixture","color":null,"sort":0,"status":1,"remark":null}`},
+		{"PUT", "/api/v1/sys/dict-datas/1", `{"type_id":1,"label":"Fixture","value":"fixture","color":null,"sort":0,"status":1,"remark":null}`},
+		{"DELETE", "/api/v1/sys/dict-datas", `{"pks":[1]}`},
 	} {
 		app := newDictApp(t)
 		resp, body := requestJSON(t, app, tc.method, tc.path, tc.body)
@@ -173,8 +183,8 @@ func TestDictMissingMutationsMatchPython(t *testing.T) {
 		body string
 		msg  string
 	}{
-		{"/api/v1/dict-types/999999", `{"name":"missing","code":"missing","remark":null}`, "字典类型不存在"},
-		{"/api/v1/dict-datas/999999", `{"type_id":1,"label":"missing","value":"missing","color":null,"sort":0,"status":1,"remark":null}`, "字典数据不存在"},
+		{"/api/v1/sys/dict-types/999999", `{"name":"missing","code":"missing","remark":null}`, "字典类型不存在"},
+		{"/api/v1/sys/dict-datas/999999", `{"type_id":1,"label":"missing","value":"missing","color":null,"sort":0,"status":1,"remark":null}`, "字典数据不存在"},
 	} {
 		resp, body := requestJSON(t, app, "PUT", tc.path, tc.body)
 		assertErrorEnvelope(t, resp, body, fiber.StatusNotFound, tc.msg)
@@ -184,8 +194,8 @@ func TestDictMissingMutationsMatchPython(t *testing.T) {
 		path string
 		body string
 	}{
-		{"/api/v1/dict-types", `{"pks":[999999]}`},
-		{"/api/v1/dict-datas", `{"pks":[999999]}`},
+		{"/api/v1/sys/dict-types", `{"pks":[999999]}`},
+		{"/api/v1/sys/dict-datas", `{"pks":[999999]}`},
 	} {
 		resp, body := requestJSON(t, app, "DELETE", tc.path, tc.body)
 		assertStatusOK(t, resp)
@@ -196,7 +206,7 @@ func TestDictMissingMutationsMatchPython(t *testing.T) {
 func TestDictValidationErrorsMatchPython(t *testing.T) {
 	app := newDictApp(t)
 
-	resp, body := requestJSON(t, app, "GET", "/api/v1/dict-types/not-int", "")
+	resp, body := requestJSON(t, app, "GET", "/api/v1/sys/dict-types/not-int", "")
 	assertErrorEnvelope(t, resp, body, fiber.StatusUnprocessableEntity, "请求参数非法: pk 输入应为有效的整数，无法将字符串解析为整数，输入：not-int")
 }
 

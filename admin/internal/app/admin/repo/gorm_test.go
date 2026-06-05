@@ -72,6 +72,34 @@ func TestGORMRepositoryPersistsCoreAdminRelations(t *testing.T) {
 	}
 }
 
+func TestGORMRepositoryFindsLegacyUserAfterDeletedDefaultMigration(t *testing.T) {
+	provider := newGORMProvider(t)
+	ctx := context.Background()
+	if err := provider.Write().WithContext(ctx).Exec(`
+insert into sys_user (id, uuid, username, nickname, password, email, status, is_superuser, is_staff, is_multi_login, join_time, created_time)
+values (10, 'legacy-user', 'legacy_admin', 'Legacy Admin', 'secret', 'legacy@example.com', 1, true, true, true, '2026-06-05 11:31:58', '2026-06-05 11:31:58')
+`).Error; err != nil {
+		t.Fatalf("insert legacy user error = %v", err)
+	}
+	repository := repo.NewGORMRepository(provider, repo.SeedData())
+	if _, err := repository.GetUserByUsername(ctx, "legacy_admin"); err == nil {
+		t.Fatal("GetUserByUsername() error = nil before deleted default migration, want not found")
+	}
+
+	migration := adminmigration.UserDeletedDefaultMigration(provider)
+	if err := migration.Up(ctx); err != nil {
+		t.Fatalf("UserDeletedDefaultMigration() error = %v", err)
+	}
+
+	user, err := repository.GetUserByUsername(ctx, "legacy_admin")
+	if err != nil {
+		t.Fatalf("GetUserByUsername() error = %v", err)
+	}
+	if user.Deleted != 0 {
+		t.Fatalf("Deleted = %d, want 0", user.Deleted)
+	}
+}
+
 func hasMenuName(menus []model.Menu, name string) bool {
 	for _, menu := range menus {
 		if menu.Name == name {

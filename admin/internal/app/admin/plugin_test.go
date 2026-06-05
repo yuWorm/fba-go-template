@@ -218,8 +218,8 @@ func TestAdminPluginRegistersMigrationWhenDBProviderExists(t *testing.T) {
 	}
 
 	migrations := ctx.Migrations()
-	if len(migrations) != 3 {
-		t.Fatalf("migrations = %d, want 3", len(migrations))
+	if len(migrations) != 4 {
+		t.Fatalf("migrations = %d, want 4", len(migrations))
 	}
 	versions := map[string]bool{}
 	for _, migration := range migrations {
@@ -228,8 +228,8 @@ func TestAdminPluginRegistersMigrationWhenDBProviderExists(t *testing.T) {
 		}
 		versions[migration.Version] = true
 	}
-	if !versions["0001"] || !versions["0002"] || !versions["0003"] {
-		t.Fatalf("migration versions = %v, want 0001, 0002 and 0003", versions)
+	if !versions["0001"] || !versions["0002"] || !versions["0003"] || !versions["0004"] {
+		t.Fatalf("migration versions = %v, want 0001, 0002, 0003 and 0004", versions)
 	}
 }
 

@@ -40,7 +40,17 @@ func TestServiceInvalidatesDictCacheOnWrites(t *testing.T) {
 }
 
 func TestServiceFiltersDictDataByTypeCode(t *testing.T) {
-	svc := service.New(repo.NewMemoryRepository(repo.SeedData()), service.NoopInvalidator{})
+	seed := repo.SeedData()
+	seed.Data = append(seed.Data, model.DictData{
+		ID:       999,
+		TypeID:   1,
+		TypeCode: "sys_status",
+		Label:    "禁用测试项",
+		Value:    "disabled",
+		Sort:     999,
+		Status:   0,
+	})
+	svc := service.New(repo.NewMemoryRepository(seed), service.NoopInvalidator{})
 
 	items, err := svc.GetDataByTypeCode(context.Background(), "sys_status")
 	if err != nil {
@@ -48,6 +58,9 @@ func TestServiceFiltersDictDataByTypeCode(t *testing.T) {
 	}
 	if len(items) != 2 {
 		t.Fatalf("items = %d, want 2", len(items))
+	}
+	if items[0].Value != "1" || items[1].Value != "0" {
+		t.Fatalf("values = [%s %s], want Python sort desc order [1 0]", items[0].Value, items[1].Value)
 	}
 	for _, item := range items {
 		if item.TypeCode != "sys_status" {
@@ -59,14 +72,14 @@ func TestServiceFiltersDictDataByTypeCode(t *testing.T) {
 func TestServiceReturnsPageData(t *testing.T) {
 	svc := service.New(repo.NewMemoryRepository(repo.SeedData()), service.NoopInvalidator{})
 
-	page, err := svc.ListTypes(context.Background(), repo.DictTypeFilter{}, 1, 20, "/api/v1/dict-types")
+	page, err := svc.ListTypes(context.Background(), repo.DictTypeFilter{}, 1, 20, "/api/v1/sys/dict-types")
 	if err != nil {
 		t.Fatalf("ListTypes() error = %v", err)
 	}
 	if page.Total != int64(len(model.SeedDictTypes())) {
 		t.Fatalf("Total = %d, want %d", page.Total, len(model.SeedDictTypes()))
 	}
-	if page.Links.Self != "/api/v1/dict-types?page=1&size=20" {
+	if page.Links.Self != "/api/v1/sys/dict-types?page=1&size=20" {
 		t.Fatalf("Self link = %q", page.Links.Self)
 	}
 }

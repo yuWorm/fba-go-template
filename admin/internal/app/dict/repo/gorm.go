@@ -88,7 +88,7 @@ func (r *GORMRepository) GetData(ctx context.Context, id int) (model.DictData, e
 
 func (r *GORMRepository) DataByTypeCode(ctx context.Context, code string) ([]model.DictData, error) {
 	var items []model.DictData
-	err := r.provider.Read().WithContext(ctx).Where("type_code = ?", code).Order("sort ASC, id ASC").Find(&items).Error
+	err := r.provider.Read().WithContext(ctx).Where("type_code = ? AND status = ?", code, 1).Order("sort DESC, id DESC").Find(&items).Error
 	if err != nil {
 		return nil, err
 	}

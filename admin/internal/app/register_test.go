@@ -52,8 +52,8 @@ func TestDefaultModuleMigrationsSeedSQLInitialData(t *testing.T) {
 	}
 
 	migrations := ctx.Migrations()
-	if len(migrations) != 13 {
-		t.Fatalf("migration count = %d, want 13", len(migrations))
+	if len(migrations) != 14 {
+		t.Fatalf("migration count = %d, want 14", len(migrations))
 	}
 	for _, migration := range migrations {
 		if err := migration.Up(context.Background()); err != nil {

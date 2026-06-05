@@ -49,7 +49,7 @@ func (h Handler) ListDictTypes(c fiber.Ctx) error {
 	data, err := h.service.ListTypes(c.RequestCtx(), repo.DictTypeFilter{
 		Name: c.Query("name"),
 		Code: c.Query("code"),
-	}, page, size, "/api/v1/dict-types")
+	}, page, size, "/api/v1/sys/dict-types")
 	if err != nil {
 		return err
 	}
@@ -123,7 +123,7 @@ func (h Handler) ListDictData(c fiber.Ctx) error {
 		Value:    c.Query("value"),
 		Status:   intPtrQuery(c, "status"),
 		TypeID:   intPtrQuery(c, "type_id"),
-	}, page, size, "/api/v1/dict-datas")
+	}, page, size, "/api/v1/sys/dict-datas")
 	if err != nil {
 		return err
 	}
