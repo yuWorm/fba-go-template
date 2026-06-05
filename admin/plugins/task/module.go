@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"os"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	taskmigration "github.com/yuWorm/fba-go-template/admin/plugins/task/migration"
 	"github.com/yuWorm/fba-go-template/admin/plugins/task/repo"
 	"github.com/yuWorm/fba-go-template/admin/plugins/task/service"
+	"github.com/yuWorm/fba-go/core/command"
 	"github.com/yuWorm/fba-go/core/db"
 	"github.com/yuWorm/fba-go/core/plugin"
 	"github.com/yuWorm/fba-go/core/realtime"
@@ -69,6 +71,15 @@ func (Module) Register(ctx plugin.Context) error {
 
 	svc := service.New(repository, registry, executor, leader, service.WithRealtimeHub(hub))
 	svc.RegisterRealtimeHandlers(hub)
+	if err := ctx.Command(command.Command{
+		Use:   "task reload",
+		Short: "Reload task runtime",
+		Run: func(ctx context.Context, _ command.Runtime, _ []string) error {
+			return executor.Reload(ctx)
+		},
+	}); err != nil {
+		return err
+	}
 	handler := taskapi.NewHandler(svc)
 	return plugin.RegisterRoutes(ctx, taskapi.Routes(handler))
 }

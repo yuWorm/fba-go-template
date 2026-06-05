@@ -11,6 +11,8 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	task "github.com/yuWorm/fba-go-template/admin/plugins/task"
+	"github.com/yuWorm/fba-go/core/command"
+	"github.com/yuWorm/fba-go/core/config"
 	"github.com/yuWorm/fba-go/core/db"
 	"github.com/yuWorm/fba-go/core/di"
 	"github.com/yuWorm/fba-go/core/middleware"
@@ -108,6 +110,30 @@ func TestTaskPluginConsumesCoreRuntimeContract(t *testing.T) {
 	assertEnvelopeNull(t, body)
 	if runtime.canceledTaskID != "task-123" {
 		t.Fatalf("canceled task ID = %q, want task-123", runtime.canceledTaskID)
+	}
+}
+
+func TestTaskPluginRegistersReloadCommand(t *testing.T) {
+	runtime := &recordingRuntime{}
+	container := di.New()
+	if err := container.Provide(func() coretask.Runtime { return runtime }); err != nil {
+		t.Fatalf("Provide() error = %v", err)
+	}
+	ctx := plugin.NewContext(plugin.ContextOptions{Container: container})
+
+	if err := task.FBAPlugin().Register(ctx); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	err := command.Execute(context.Background(), command.ExecuteOptions{
+		Use:      "admin",
+		Runtime:  testCommandRuntime{container: container},
+		Commands: ctx.Commands(),
+	}, []string{"task", "reload"})
+	if err != nil {
+		t.Fatalf("Execute(task reload) error = %v", err)
+	}
+	if runtime.reloadCalls != 1 {
+		t.Fatalf("reload calls = %d, want 1", runtime.reloadCalls)
 	}
 }
 
@@ -418,6 +444,26 @@ type recordingRuntime struct {
 	reloadCalls    int
 	executedTask   string
 	canceledTaskID string
+}
+
+type testCommandRuntime struct {
+	container *di.Container
+}
+
+func (r testCommandRuntime) Container() *di.Container {
+	return r.container
+}
+
+func (testCommandRuntime) Config() config.Options {
+	return config.Options{}
+}
+
+func (testCommandRuntime) Output() io.Writer {
+	return io.Discard
+}
+
+func (testCommandRuntime) ErrorOutput() io.Writer {
+	return io.Discard
 }
 
 func (r *recordingRuntime) Reload(context.Context) error {

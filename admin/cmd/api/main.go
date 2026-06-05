@@ -3,48 +3,17 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 
-	fba "github.com/yuWorm/fba-go"
-	appmodules "github.com/yuWorm/fba-go-template/admin/internal/app"
-	"github.com/yuWorm/fba-go/core/plugin"
+	adminruntime "github.com/yuWorm/fba-go-template/admin/internal/runtime"
 )
 
 func main() {
-	application, err := newApplication()
+	runtime, err := adminruntime.New()
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := application.Run(context.Background()); err != nil {
+	if err := runtime.Execute(context.Background(), os.Args[1:]); err != nil {
 		log.Fatal(err)
 	}
-}
-
-func newApplication() (fba.Application, error) {
-	opts, err := fba.LoadOptionsFromEnv()
-	if err != nil {
-		return nil, err
-	}
-	opts = opts.WithDefaults()
-	application, err := fba.NewApplication(opts)
-	if err != nil {
-		return nil, err
-	}
-
-	registry := plugin.NewRegistry()
-	if err := appmodules.Register(registry); err != nil {
-		return nil, err
-	}
-
-	pluginContext := plugin.NewContext(plugin.ContextOptions{
-		Container: application.Container(),
-		Router:    application.HTTP(),
-		APIGroup:  application.HTTP().Group(opts.App.APIBasePath),
-		Config:    opts,
-	})
-	if err := registry.RegisterAll(pluginContext); err != nil {
-		return nil, err
-	}
-	plugin.MountRoutes(pluginContext.APIGroup(), pluginContext.Routes(), plugin.WithContainer(pluginContext.Container()))
-
-	return application, nil
 }

@@ -7,7 +7,10 @@ Included reference plugins: `email`, `oauth2`, and `task`.
 
 ```bash
 go test ./...
-go run ./cmd/api
+go run ./cmd/api          # defaults to server
+go run ./cmd/api server
+go run ./cmd/api migrate up
+go run ./cmd/api migrate status
 ```
 
 Generate a project from this template:

@@ -21,6 +21,8 @@ make tidy
 make test
 make build
 make run
+go run ./cmd/api migrate up
+go run ./cmd/api migrate status
 ```
 
 When using a local development build of `fbago`, the generated `go.mod`
