@@ -66,6 +66,47 @@ func (h Handler) UploadFile(c fiber.Ctx) error {
 	return c.JSON(response.Success(result))
 }
 
+func (h Handler) CreatePresignedUpload(c fiber.Ctx) error {
+	var param dto.PresignUploadParam
+	if err := c.Bind().Body(&param); err != nil {
+		return err
+	}
+	var ttl time.Duration
+	if param.TTLSeconds > 0 {
+		ttl = time.Duration(param.TTLSeconds) * time.Second
+	}
+	result, err := h.service.CreatePresignedUpload(c.RequestCtx(), service.PresignUploadInput{
+		Filename:    param.Filename,
+		ContentType: param.ContentType,
+		Size:        param.Size,
+		SceneCode:   param.SceneCode,
+		Field:       param.Field,
+		SubjectType: param.SubjectType,
+		SubjectID:   param.SubjectID,
+		OwnerType:   param.OwnerType,
+		OwnerID:     param.OwnerID,
+		Temp:        param.Temp,
+		TTL:         ttl,
+		Actor:       actor(c),
+	})
+	if err != nil {
+		return err
+	}
+	return c.JSON(response.Success(result))
+}
+
+func (h Handler) CompletePresignedUpload(c fiber.Ctx) error {
+	id, err := parseID(c.Params("pk"))
+	if err != nil {
+		return err
+	}
+	item, err := h.service.CompletePresignedUpload(c.RequestCtx(), id, actor(c))
+	if err != nil {
+		return err
+	}
+	return c.JSON(response.Success(item))
+}
+
 func (h Handler) ListFiles(c fiber.Ctx) error {
 	page, size := pageParams(c)
 	data, err := h.service.ListFiles(c.RequestCtx(), repo.ObjectFilter{

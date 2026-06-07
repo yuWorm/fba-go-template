@@ -13,6 +13,19 @@ type UploadResult struct {
 	Ref  RefDetail  `json:"ref"`
 }
 
+type PresignedUploadResult struct {
+	File      FileDetail         `json:"file"`
+	Ref       RefDetail          `json:"ref"`
+	Presigned PresignedUploadURL `json:"presigned"`
+}
+
+type PresignedUploadURL struct {
+	Method    string            `json:"method"`
+	URL       string            `json:"url"`
+	ExpiresAt string            `json:"expires_at"`
+	Headers   map[string]string `json:"headers"`
+}
+
 type FileDetail struct {
 	ID           int     `json:"id"`
 	UUID         string  `json:"uuid"`
@@ -146,6 +159,20 @@ type ShareVerifyParam struct {
 	Password string `json:"password"`
 }
 
+type PresignUploadParam struct {
+	Filename    string  `json:"filename"`
+	ContentType string  `json:"content_type"`
+	Size        int64   `json:"size"`
+	SceneCode   string  `json:"scene_code"`
+	Field       string  `json:"field"`
+	SubjectType string  `json:"subject_type"`
+	SubjectID   string  `json:"subject_id"`
+	OwnerType   *string `json:"owner_type"`
+	OwnerID     *string `json:"owner_id"`
+	Temp        *bool   `json:"temp"`
+	TTLSeconds  int     `json:"ttl_seconds"`
+}
+
 func FileDetailFromModel(item model.FileObject, url string) FileDetail {
 	return FileDetail{
 		ID:           item.ID,
@@ -186,6 +213,15 @@ func RefDetailFromModel(ref model.FileRef, file model.FileObject, url string) Re
 		CreatedTime: formatTime(ref.CreatedTime),
 		UpdatedTime: formatTimePtr(ref.UpdatedTime),
 		File:        FileDetailFromModel(file, url),
+	}
+}
+
+func PresignedUploadURLFromStorage(method string, url string, expiresAt time.Time, headers map[string]string) PresignedUploadURL {
+	return PresignedUploadURL{
+		Method:    method,
+		URL:       url,
+		ExpiresAt: formatTime(expiresAt),
+		Headers:   headers,
 	}
 }
 

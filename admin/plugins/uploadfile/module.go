@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hibiken/asynq"
 	uploadapi "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/api"
 	uploadconfig "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/config"
 	uploadmigration "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/migration"
@@ -13,6 +14,13 @@ import (
 	"github.com/yuWorm/fba-go/core/command"
 	"github.com/yuWorm/fba-go/core/db"
 	"github.com/yuWorm/fba-go/core/plugin"
+	coretask "github.com/yuWorm/fba-go/core/task"
+)
+
+const (
+	cleanupTaskType  = "uploadfile.cleanup"
+	cleanupTaskName  = "Cleanup expired upload files"
+	cleanupTaskQueue = "default"
 )
 
 func FBAPlugin() plugin.Module {
@@ -58,6 +66,27 @@ func (Module) Register(ctx plugin.Context) error {
 	svc := service.New(repository, registry, service.Options{
 		TokenSecret: []byte(ctx.Config().Auth.JWTSecret),
 	})
+	if err := ctx.Task(plugin.TaskDefinition{
+		Type:  cleanupTaskType,
+		Name:  cleanupTaskName,
+		Queue: cleanupTaskQueue,
+	}); err != nil {
+		return err
+	}
+	var taskRegistry coretask.DefinitionRegistry
+	if ctx.Container().Resolve(&taskRegistry) && taskRegistry != nil {
+		if err := taskRegistry.Add(coretask.Definition{
+			Type:  cleanupTaskType,
+			Name:  cleanupTaskName,
+			Queue: cleanupTaskQueue,
+			Handler: asynq.HandlerFunc(func(taskCtx context.Context, _ *asynq.Task) error {
+				_, err := svc.CleanupExpiredTemps(taskCtx, service.CleanupOptions{})
+				return err
+			}),
+		}); err != nil {
+			return err
+		}
+	}
 	if err := ctx.Command(command.Command{
 		Use:                "uploadfile cleanup",
 		Short:              "Cleanup expired temporary upload files",

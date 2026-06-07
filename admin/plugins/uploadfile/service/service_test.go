@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -268,6 +269,75 @@ func TestServiceScopesShareListAndDisableToActor(t *testing.T) {
 	}
 	if err := svc.DisableShare(ctx, share.ID, other); err == nil {
 		t.Fatal("DisableShare() by foreign user succeeded")
+	}
+}
+
+func TestServiceCreatesAndCompletesPresignedUpload(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	backend := fakePresignBackend{}
+	registry.Add(model.DefaultStorageCode, backend)
+	svc := service.New(repository, registry, service.Options{
+		TokenSecret:            []byte("test-secret"),
+		DirectUploadPresignTTL: 10 * time.Minute,
+	})
+	actor := service.Actor{UserID: intPtr(7)}
+
+	result, err := svc.CreatePresignedUpload(ctx, service.PresignUploadInput{
+		Filename:    "direct.txt",
+		ContentType: "text/plain",
+		Size:        6,
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       actor,
+	})
+	if err != nil {
+		t.Fatalf("CreatePresignedUpload() error = %v", err)
+	}
+	if result.Presigned.Method != http.MethodPut || result.Presigned.URL == "" || result.Presigned.Headers["Content-Type"] != "text/plain" {
+		t.Fatalf("presigned = %+v", result.Presigned)
+	}
+	if result.File.Status != model.StatusPending || result.Ref.Status != model.RefStatusTemp {
+		t.Fatalf("result file/ref status = %q/%q, want pending/temp", result.File.Status, result.Ref.Status)
+	}
+	object, err := repository.GetObject(ctx, result.File.ID)
+	if err != nil {
+		t.Fatalf("GetObject() error = %v", err)
+	}
+	if object.Status != model.StatusPending || object.UploadedBy == nil || *object.UploadedBy != 7 {
+		t.Fatalf("object = %+v, want pending uploaded_by 7", object)
+	}
+
+	completed, err := svc.CompletePresignedUpload(ctx, result.File.ID, actor)
+	if err != nil {
+		t.Fatalf("CompletePresignedUpload() error = %v", err)
+	}
+	if completed.Status != model.StatusActive {
+		t.Fatalf("completed status = %q, want active", completed.Status)
+	}
+}
+
+func TestServiceRejectsForeignPresignedUploadCompletion(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, fakePresignBackend{})
+	svc := service.New(repository, registry, service.Options{TokenSecret: []byte("test-secret")})
+	owner := service.Actor{UserID: intPtr(7)}
+	other := service.Actor{UserID: intPtr(8)}
+
+	result, err := svc.CreatePresignedUpload(ctx, service.PresignUploadInput{
+		Filename:    "direct.txt",
+		ContentType: "text/plain",
+		Size:        6,
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       owner,
+	})
+	if err != nil {
+		t.Fatalf("CreatePresignedUpload() error = %v", err)
+	}
+	if _, err := svc.CompletePresignedUpload(ctx, result.File.ID, other); err == nil {
+		t.Fatal("CompletePresignedUpload() by foreign owner succeeded")
 	}
 }
 
@@ -637,4 +707,35 @@ func quoteJSON(value string) string {
 	}
 	quoted.WriteByte('"')
 	return quoted.String()
+}
+
+type fakePresignBackend struct{}
+
+func (fakePresignBackend) Put(context.Context, string, io.Reader, storage.PutOptions) (storage.ObjectInfo, error) {
+	return storage.ObjectInfo{}, storage.ErrUnsupported
+}
+
+func (fakePresignBackend) Open(context.Context, string) (io.ReadCloser, storage.ObjectInfo, error) {
+	return nil, storage.ObjectInfo{}, storage.ErrUnsupported
+}
+
+func (fakePresignBackend) Delete(context.Context, string) error {
+	return nil
+}
+
+func (fakePresignBackend) PresignPut(_ context.Context, key string, ttl time.Duration, opts storage.PutOptions) (storage.PresignedURL, error) {
+	return storage.PresignedURL{
+		Method:    http.MethodPut,
+		URL:       "https://signed.example.test/" + key,
+		ExpiresAt: time.Now().Add(ttl),
+		Headers:   map[string]string{"Content-Type": opts.ContentType},
+	}, nil
+}
+
+func (fakePresignBackend) PresignGet(context.Context, string, time.Duration) (storage.PresignedURL, error) {
+	return storage.PresignedURL{}, storage.ErrUnsupported
+}
+
+func (fakePresignBackend) PublicURL(key string) string {
+	return "https://cdn.example.test/" + key
 }

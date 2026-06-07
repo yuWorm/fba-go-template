@@ -22,17 +22,19 @@ import (
 type Clock func() time.Time
 
 type Options struct {
-	TokenSecret      []byte
-	Now              Clock
-	DownloadTokenTTL time.Duration
+	TokenSecret            []byte
+	Now                    Clock
+	DownloadTokenTTL       time.Duration
+	DirectUploadPresignTTL time.Duration
 }
 
 type Service struct {
-	repo     repo.Repository
-	storage  *storage.Registry
-	secret   []byte
-	now      Clock
-	tokenTTL time.Duration
+	repo            repo.Repository
+	storage         *storage.Registry
+	secret          []byte
+	now             Clock
+	tokenTTL        time.Duration
+	directUploadTTL time.Duration
 }
 
 type UploadInput struct {
@@ -47,6 +49,21 @@ type UploadInput struct {
 	OwnerType   *string
 	OwnerID     *string
 	Temp        *bool
+	Actor       Actor
+}
+
+type PresignUploadInput struct {
+	Filename    string
+	ContentType string
+	Size        int64
+	SceneCode   string
+	Field       string
+	SubjectType string
+	SubjectID   string
+	OwnerType   *string
+	OwnerID     *string
+	Temp        *bool
+	TTL         time.Duration
 	Actor       Actor
 }
 
@@ -91,7 +108,17 @@ func New(repository repo.Repository, registry *storage.Registry, opts Options) *
 	if opts.DownloadTokenTTL <= 0 {
 		opts.DownloadTokenTTL = 10 * time.Minute
 	}
-	return &Service{repo: repository, storage: registry, secret: opts.TokenSecret, now: opts.Now, tokenTTL: opts.DownloadTokenTTL}
+	if opts.DirectUploadPresignTTL <= 0 {
+		opts.DirectUploadPresignTTL = 15 * time.Minute
+	}
+	return &Service{
+		repo:            repository,
+		storage:         registry,
+		secret:          opts.TokenSecret,
+		now:             opts.Now,
+		tokenTTL:        opts.DownloadTokenTTL,
+		directUploadTTL: opts.DirectUploadPresignTTL,
+	}
 }
 
 func (s *Service) Upload(ctx context.Context, input UploadInput) (dto.UploadResult, error) {
@@ -196,6 +223,133 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (dto.UploadResu
 		return dto.UploadResult{}, err
 	}
 	return dto.UploadResult{File: dto.FileDetailFromModel(object, s.fileURL(object)), Ref: dto.RefDetailFromModel(ref, object, s.fileURL(object))}, nil
+}
+
+func (s *Service) CreatePresignedUpload(ctx context.Context, input PresignUploadInput) (dto.PresignedUploadResult, error) {
+	sceneCode := strings.TrimSpace(input.SceneCode)
+	if sceneCode == "" {
+		sceneCode = model.DefaultSceneCode
+	}
+	scene, err := s.repo.GetScene(ctx, sceneCode)
+	if err != nil {
+		return dto.PresignedUploadResult{}, notFound("upload scene not found", err)
+	}
+	if !scene.Enabled {
+		return dto.PresignedUploadResult{}, badRequest("upload scene disabled", nil)
+	}
+	if input.Size > scene.MaxSize {
+		return dto.PresignedUploadResult{}, badRequest("file size exceeds scene limit", nil)
+	}
+	name := sanitizeFilename(input.Filename)
+	ext := strings.TrimPrefix(strings.ToLower(path.Ext(name)), ".")
+	if ext == "" {
+		return dto.PresignedUploadResult{}, badRequest("file extension is required", nil)
+	}
+	if !allowed(ext, scene.AllowedExts) {
+		return dto.PresignedUploadResult{}, badRequest("file extension is not allowed", nil)
+	}
+	contentType := strings.TrimSpace(input.ContentType)
+	if contentType == "" {
+		contentType = http.DetectContentType([]byte{})
+	}
+	if scene.AllowedMimes != nil && !allowed(contentType, scene.AllowedMimes) {
+		return dto.PresignedUploadResult{}, badRequest("file MIME type is not allowed", nil)
+	}
+
+	storageConfig, backend, err := s.backend(ctx, scene)
+	if err != nil {
+		return dto.PresignedUploadResult{}, err
+	}
+	uuid := randomHex(16)
+	key := objectKey(storageConfig.Prefix, scene.Code, uuid, ext, s.now())
+	ttl := input.TTL
+	if ttl <= 0 {
+		ttl = s.directUploadTTL
+	}
+	presigned, err := backend.PresignPut(ctx, key, ttl, storage.PutOptions{ContentType: contentType})
+	if err != nil {
+		return dto.PresignedUploadResult{}, err
+	}
+	object, err := s.repo.CreateObject(ctx, repo.CreateObjectParam{
+		UUID:         uuid,
+		StorageCode:  storageConfig.Code,
+		Provider:     storageConfig.Provider,
+		Bucket:       storageConfig.Bucket,
+		ObjectKey:    key,
+		OriginalName: name,
+		Ext:          ext,
+		Mime:         contentType,
+		Size:         input.Size,
+		Visibility:   defaultString(scene.DefaultVisibility, model.VisibilityPrivate),
+		Status:       model.StatusPending,
+		UploadedBy:   input.Actor.UserID,
+	})
+	if err != nil {
+		return dto.PresignedUploadResult{}, err
+	}
+
+	temp := input.SubjectType == "" || input.SubjectID == ""
+	if input.Temp != nil {
+		temp = *input.Temp
+	}
+	refStatus := model.RefStatusActive
+	var expiresAt *time.Time
+	if temp {
+		refStatus = model.RefStatusTemp
+		expire := s.now().Add(time.Duration(scene.TempTTLSeconds) * time.Second)
+		expiresAt = &expire
+	}
+	ownerType := cleanOptional(input.OwnerType)
+	ownerID := cleanOptional(input.OwnerID)
+	if ownerType == nil && ownerID == nil {
+		ownerType, ownerID = input.Actor.defaultOwner()
+	}
+	if !input.Actor.allowsOwner(ownerType, ownerID) {
+		return dto.PresignedUploadResult{}, forbidden("file owner is not allowed")
+	}
+	ref, err := s.repo.CreateRef(ctx, repo.CreateRefParam{
+		FileID:      object.ID,
+		SceneCode:   scene.Code,
+		SubjectType: optionalString(input.SubjectType),
+		SubjectID:   optionalString(input.SubjectID),
+		Field:       optionalString(input.Field),
+		Status:      refStatus,
+		ExpiresAt:   expiresAt,
+		OwnerType:   ownerType,
+		OwnerID:     ownerID,
+		CreatedBy:   input.Actor.UserID,
+	})
+	if err != nil {
+		return dto.PresignedUploadResult{}, err
+	}
+	fileURL := s.fileURL(object)
+	return dto.PresignedUploadResult{
+		File: dto.FileDetailFromModel(object, fileURL),
+		Ref:  dto.RefDetailFromModel(ref, object, fileURL),
+		Presigned: dto.PresignedUploadURLFromStorage(
+			presigned.Method,
+			presigned.URL,
+			presigned.ExpiresAt,
+			presigned.Headers,
+		),
+	}, nil
+}
+
+func (s *Service) CompletePresignedUpload(ctx context.Context, id int, actor Actor) (dto.FileDetail, error) {
+	object, _, err := s.ensureObjectAccess(ctx, id, actor)
+	if err != nil {
+		return dto.FileDetail{}, err
+	}
+	if object.Status == model.StatusDeleted {
+		return dto.FileDetail{}, badRequest("file is deleted", nil)
+	}
+	if object.Status != model.StatusActive {
+		if err := s.repo.UpdateObjectStatus(ctx, id, model.StatusActive); err != nil {
+			return dto.FileDetail{}, err
+		}
+		object.Status = model.StatusActive
+	}
+	return dto.FileDetailFromModel(object, s.fileURL(object)), nil
 }
 
 func (s *Service) Bind(ctx context.Context, input BindInput) error {

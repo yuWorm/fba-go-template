@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hibiken/asynq"
 	uploadfile "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile"
 	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/model"
 	uploadrepo "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/repo"
@@ -17,6 +18,7 @@ import (
 	"github.com/yuWorm/fba-go/core/db"
 	"github.com/yuWorm/fba-go/core/di"
 	"github.com/yuWorm/fba-go/core/plugin"
+	coretask "github.com/yuWorm/fba-go/core/task"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -37,6 +39,8 @@ func TestUploadfilePluginRegistersRoutes(t *testing.T) {
 		permission   string
 	}{
 		"POST /sys/upload/files":                    {authRequired: true, permission: "sys:upload:file:add"},
+		"POST /sys/upload/files/presign":            {authRequired: true, permission: "sys:upload:file:add"},
+		"POST /sys/upload/files/:pk/complete":       {authRequired: true, permission: "sys:upload:file:add"},
 		"GET /sys/upload/files/:pk":                 {authRequired: true},
 		"GET /sys/upload/files":                     {authRequired: true},
 		"DELETE /sys/upload/files":                  {authRequired: true, permission: "sys:upload:file:del"},
@@ -150,6 +154,50 @@ UPLOADFILE_DEFAULT_TEMP_TTL_SECONDS=600
 	if scene.MaxSize != 12345 || scene.TempTTLSeconds != 600 {
 		t.Fatalf("scene = %+v, want env configured limits", scene)
 	}
+}
+
+func TestUploadfilePluginRegistersCleanupTaskMetadata(t *testing.T) {
+	ctx := plugin.NewContext(plugin.ContextOptions{})
+	if err := uploadfile.FBAPlugin().Register(ctx); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	tasks := ctx.Tasks()
+	for _, task := range tasks {
+		if task.Type == "uploadfile.cleanup" {
+			if task.Name != "Cleanup expired upload files" || task.Queue != "default" {
+				t.Fatalf("cleanup task = %+v, want name and default queue", task)
+			}
+			return
+		}
+	}
+	t.Fatalf("cleanup task metadata not registered: %+v", tasks)
+}
+
+func TestUploadfilePluginRegistersExecutableCleanupTask(t *testing.T) {
+	registry := coretask.NewRegistry()
+	container := di.New()
+	if err := container.Provide(func() *coretask.Registry {
+		return registry
+	}); err != nil {
+		t.Fatalf("Provide(task registry) error = %v", err)
+	}
+	ctx := plugin.NewContext(plugin.ContextOptions{Container: container})
+	if err := uploadfile.FBAPlugin().Register(ctx); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	definitions := registry.All()
+	for _, definition := range definitions {
+		if definition.Type == "uploadfile.cleanup" {
+			if definition.Name != "Cleanup expired upload files" || definition.Queue != "default" || definition.Handler == nil {
+				t.Fatalf("cleanup definition = %+v, want executable default task", definition)
+			}
+			if err := definition.Handler.ProcessTask(context.Background(), asynq.NewTask(definition.Type, []byte("{}"))); err != nil {
+				t.Fatalf("cleanup handler ProcessTask() error = %v", err)
+			}
+			return
+		}
+	}
+	t.Fatalf("cleanup task definition not registered: %+v", definitions)
 }
 
 func TestUploadfilePluginRegistersCleanupCommand(t *testing.T) {
