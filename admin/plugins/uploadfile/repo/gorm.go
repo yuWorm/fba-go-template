@@ -313,6 +313,33 @@ func (r *GORMRepository) CountRefsByFileStatus(ctx context.Context, fileID int, 
 	return total, err
 }
 
+func (r *GORMRepository) CountRefsByScene(ctx context.Context, sceneCode string) (int64, error) {
+	var total int64
+	err := r.provider.Read().WithContext(ctx).
+		Model(&model.FileRef{}).
+		Where("scene_code = ? AND status <> ?", sceneCode, model.RefStatusDeleted).
+		Count(&total).Error
+	return total, err
+}
+
+func (r *GORMRepository) CountObjectsByStorage(ctx context.Context, storageCode string) (int64, error) {
+	var total int64
+	err := r.provider.Read().WithContext(ctx).
+		Model(&model.FileObject{}).
+		Where("storage_code = ? AND status <> ?", storageCode, model.StatusDeleted).
+		Count(&total).Error
+	return total, err
+}
+
+func (r *GORMRepository) CountScenesByStorage(ctx context.Context, storageCode string) (int64, error) {
+	var total int64
+	err := r.provider.Read().WithContext(ctx).
+		Model(&model.Scene{}).
+		Where("default_storage_code = ?", storageCode).
+		Count(&total).Error
+	return total, err
+}
+
 func (r *GORMRepository) BindRefs(ctx context.Context, param BindRefsParam) error {
 	return r.provider.Transaction(ctx, func(tx *gorm.DB) error {
 		for _, fileID := range param.FileIDs {

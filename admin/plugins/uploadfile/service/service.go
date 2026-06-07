@@ -316,6 +316,13 @@ func (s *Service) DeleteScene(ctx context.Context, code string) error {
 	case model.DefaultSceneCode, model.SceneAvatar, model.SceneAttachment:
 		return badRequest("seed upload scene cannot be deleted", nil)
 	}
+	refCount, err := s.repo.CountRefsByScene(ctx, code)
+	if err != nil {
+		return err
+	}
+	if refCount > 0 {
+		return badRequest("upload scene is in use", nil)
+	}
 	return s.repo.DeleteScene(ctx, code)
 }
 
@@ -366,6 +373,20 @@ func (s *Service) DeleteStorage(ctx context.Context, code string) error {
 	}
 	if code == model.DefaultStorageCode {
 		return badRequest("default local storage cannot be deleted", nil)
+	}
+	objectCount, err := s.repo.CountObjectsByStorage(ctx, code)
+	if err != nil {
+		return err
+	}
+	if objectCount > 0 {
+		return badRequest("storage is in use", nil)
+	}
+	sceneCount, err := s.repo.CountScenesByStorage(ctx, code)
+	if err != nil {
+		return err
+	}
+	if sceneCount > 0 {
+		return badRequest("storage is used by upload scenes", nil)
 	}
 	return s.repo.DeleteStorage(ctx, code)
 }

@@ -88,6 +88,27 @@ func TestGORMRepositoryPersistsUploadLifecycleAndOwnerFilters(t *testing.T) {
 	if total != 1 || len(objects) != 1 || objects[0].ID != object.ID {
 		t.Fatalf("ListObjects total=%d items=%v, want object %d", total, objects, object.ID)
 	}
+	sceneRefs, err := repository.CountRefsByScene(ctx, model.DefaultSceneCode)
+	if err != nil {
+		t.Fatalf("CountRefsByScene() error = %v", err)
+	}
+	if sceneRefs != 1 {
+		t.Fatalf("CountRefsByScene() = %d, want 1", sceneRefs)
+	}
+	storageObjects, err := repository.CountObjectsByStorage(ctx, model.DefaultStorageCode)
+	if err != nil {
+		t.Fatalf("CountObjectsByStorage() error = %v", err)
+	}
+	if storageObjects != 1 {
+		t.Fatalf("CountObjectsByStorage() = %d, want 1", storageObjects)
+	}
+	storageScenes, err := repository.CountScenesByStorage(ctx, model.DefaultStorageCode)
+	if err != nil {
+		t.Fatalf("CountScenesByStorage() error = %v", err)
+	}
+	if storageScenes != int64(len(model.SeedScenes())) {
+		t.Fatalf("CountScenesByStorage() = %d, want seed scene count", storageScenes)
+	}
 
 	tempObject, err := repository.CreateObject(ctx, repo.CreateObjectParam{
 		UUID:         "avatar-1",

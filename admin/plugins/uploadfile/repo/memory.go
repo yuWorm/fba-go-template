@@ -397,6 +397,42 @@ func (r *MemoryRepository) CountRefsByFileStatus(_ context.Context, fileID int, 
 	return count, nil
 }
 
+func (r *MemoryRepository) CountRefsByScene(_ context.Context, sceneCode string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var count int64
+	for _, item := range r.refs {
+		if item.SceneCode == sceneCode && item.Status != model.RefStatusDeleted {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (r *MemoryRepository) CountObjectsByStorage(_ context.Context, storageCode string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var count int64
+	for _, item := range r.objects {
+		if item.StorageCode == storageCode && item.Status != model.StatusDeleted {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (r *MemoryRepository) CountScenesByStorage(_ context.Context, storageCode string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var count int64
+	for _, item := range r.scenes {
+		if stringPtrValue(item.DefaultStorageCode) == storageCode {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (r *MemoryRepository) BindRefs(_ context.Context, param BindRefsParam) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

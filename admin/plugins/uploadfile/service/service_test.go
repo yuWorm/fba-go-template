@@ -348,6 +348,85 @@ func TestServiceUsesUpdatedStorageConfigAfterPreviousUpload(t *testing.T) {
 	}
 }
 
+func TestServicePreventsDeletingSceneWithRefs(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := service.New(repository, registry, service.Options{TokenSecret: []byte("test-secret")})
+	if _, err := svc.CreateScene(ctx, dto.SceneParam{
+		Code:               "contract",
+		Name:               "Contract",
+		MaxSize:            1024,
+		AllowedExts:        strPtr(`["txt"]`),
+		DefaultStorageCode: strPtr(model.DefaultStorageCode),
+		DefaultVisibility:  model.VisibilityPrivate,
+		TempTTLSeconds:     60,
+		Enabled:            boolPtr(true),
+	}); err != nil {
+		t.Fatalf("CreateScene() error = %v", err)
+	}
+	uploaded, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "contract.txt",
+		ContentType: "text/plain",
+		Size:        8,
+		Reader:      strings.NewReader("contract"),
+		SceneCode:   "contract",
+		Actor:       service.Actor{UserID: intPtr(1), IsSuperAdmin: true},
+	})
+	if err != nil || uploaded.Ref.ID == 0 {
+		t.Fatalf("Upload() = %+v, %v", uploaded, err)
+	}
+
+	if err := svc.DeleteScene(ctx, "contract"); err == nil {
+		t.Fatal("DeleteScene() deleted referenced scene")
+	}
+}
+
+func TestServicePreventsDeletingStorageInUse(t *testing.T) {
+	ctx := context.Background()
+	archive := "archive"
+	repository := repo.NewMemoryRepository(repo.Seed{
+		Storages: append(repo.SeedData().Storages, model.Storage{
+			ID:        2,
+			Code:      archive,
+			Provider:  model.ProviderLocal,
+			Prefix:    "archive",
+			Enabled:   true,
+			IsDefault: false,
+		}),
+		Scenes: append(repo.SeedData().Scenes, model.Scene{
+			ID:                 4,
+			Code:               "archive",
+			Name:               "Archive",
+			MaxSize:            1024,
+			AllowedExts:        strPtr(`["txt"]`),
+			DefaultStorageCode: &archive,
+			DefaultVisibility:  model.VisibilityPrivate,
+			TempTTLSeconds:     60,
+			Enabled:            true,
+		}),
+	})
+	registry := storage.NewRegistry()
+	registry.Add(archive, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := service.New(repository, registry, service.Options{TokenSecret: []byte("test-secret")})
+	uploaded, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "archive.txt",
+		ContentType: "text/plain",
+		Size:        7,
+		Reader:      strings.NewReader("archive"),
+		SceneCode:   "archive",
+		Actor:       service.Actor{UserID: intPtr(1), IsSuperAdmin: true},
+	})
+	if err != nil || uploaded.File.ID == 0 {
+		t.Fatalf("Upload() = %+v, %v", uploaded, err)
+	}
+
+	if err := svc.DeleteStorage(ctx, archive); err == nil {
+		t.Fatal("DeleteStorage() deleted storage with objects")
+	}
+}
+
 func TestServiceCleansExpiredTemporaryFilesAndKeepsActiveRefs(t *testing.T) {
 	ctx := context.Background()
 	current := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
