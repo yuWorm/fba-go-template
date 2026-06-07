@@ -1,0 +1,229 @@
+package api_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/gofiber/fiber/v3"
+	uploadapi "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/api"
+	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/model"
+	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/repo"
+	uploadservice "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/service"
+	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/storage"
+	"github.com/yuWorm/fba-go/core/middleware"
+	"github.com/yuWorm/fba-go/core/plugin"
+	"github.com/yuWorm/fba-go/core/rbac"
+)
+
+func TestUploadAPIUploadsBindsListsSharesAndDownloads(t *testing.T) {
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	root := t.TempDir()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: root}))
+	svc := uploadservice.New(repository, registry, uploadservice.Options{TokenSecret: []byte("api-test-secret")})
+	app := newUploadApp(t, svc)
+
+	resp, body := requestMultipart(t, app, http.MethodPost, "/api/v1/sys/upload/files", map[string]string{
+		"file": "invoice.txt",
+	}, map[string]string{
+		"scene_code":   "default",
+		"subject_type": "order",
+		"subject_id":   "SO-1",
+		"field":        "invoice",
+		"owner_type":   "user",
+		"owner_id":     "42",
+	}, []byte("invoice body"))
+	assertStatusOK(t, resp)
+	data := envelopeMap(t, body)
+	file := assertMap(t, data["file"])
+	if file["original_name"] != "invoice.txt" {
+		t.Fatalf("original_name = %v, want invoice.txt", file["original_name"])
+	}
+	if file["uploaded_by"] != float64(42) {
+		t.Fatalf("uploaded_by = %v, want 42", file["uploaded_by"])
+	}
+	if _, ok := file["object_key"]; ok {
+		t.Fatalf("file detail leaked object_key: %v", file["object_key"])
+	}
+	fileID := int(file["id"].(float64))
+	if info, err := os.Stat(filepath.Join(root, "uploads")); err != nil || !info.IsDir() {
+		t.Fatalf("uploaded file prefix not found under local root: info=%v err=%v", info, err)
+	}
+
+	resp, body = requestJSON(t, app, http.MethodGet, "/api/v1/sys/upload/refs?scene_code=default&subject_type=order&subject_id=SO-1&field=invoice&owner_type=user&owner_id=42", "")
+	assertStatusOK(t, resp)
+	page := envelopeMap(t, body)
+	items := assertSlice(t, page["items"])
+	if len(items) != 1 {
+		t.Fatalf("refs length = %d, want 1; body=%v", len(items), body)
+	}
+	ref := assertMap(t, items[0])
+	if ref["status"] != "active" {
+		t.Fatalf("ref status = %v, want active", ref["status"])
+	}
+
+	resp, body = requestJSON(t, app, http.MethodPost, "/api/v1/sys/upload/shares", `{"file_id":`+itoa(fileID)+`,"password":"secret","max_downloads":2}`)
+	assertStatusOK(t, resp)
+	share := envelopeMap(t, body)
+	token, ok := share["token"].(string)
+	if !ok || token == "" {
+		t.Fatalf("share token = %v, want non-empty", share["token"])
+	}
+
+	resp, body = requestJSON(t, app, http.MethodPost, "/api/v1/public/upload/shares/"+token+"/verify", `{"password":"wrong"}`)
+	if resp.StatusCode != fiber.StatusForbidden {
+		t.Fatalf("verify wrong password status = %d, want 403; body=%v", resp.StatusCode, body)
+	}
+
+	resp, body = requestJSON(t, app, http.MethodPost, "/api/v1/public/upload/shares/"+token+"/verify", `{"password":"secret"}`)
+	assertStatusOK(t, resp)
+	verify := envelopeMap(t, body)
+	downloadToken, ok := verify["download_token"].(string)
+	if !ok || downloadToken == "" {
+		t.Fatalf("download_token = %v, want non-empty", verify["download_token"])
+	}
+
+	resp, raw := requestRaw(t, app, http.MethodGet, "/api/v1/public/upload/shares/"+token+"/download?download_token="+downloadToken, "", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("download status = %d body=%s", resp.StatusCode, string(raw))
+	}
+	if string(raw) != "invoice body" {
+		t.Fatalf("download body = %q, want invoice body", string(raw))
+	}
+}
+
+func newUploadApp(t *testing.T, svc *uploadservice.Service) *fiber.App {
+	t.Helper()
+	app := fiber.New(fiber.Config{ErrorHandler: middleware.ErrorHandler})
+	ctx := plugin.NewContext(plugin.ContextOptions{APIGroup: app.Group("/api/v1")})
+	handler := uploadapi.NewHandler(svc)
+	if err := plugin.RegisterRoutes(ctx, uploadapi.Routes(handler)); err != nil {
+		t.Fatalf("RegisterRoutes() error = %v", err)
+	}
+	plugin.MountRoutes(ctx.APIGroup(), ctx.Routes(), plugin.WithAuthenticator(plugin.AuthenticatorFunc(func(fiber.Ctx) (*rbac.CurrentUser, error) {
+		return &rbac.CurrentUser{ID: 42, Username: "api-user", IsStaff: true, IsSuperAdmin: true}, nil
+	})))
+	return app
+}
+
+func requestMultipart(t *testing.T, app *fiber.App, method string, path string, files map[string]string, fields map[string]string, payload []byte) (*http.Response, map[string]any) {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for name, filename := range files {
+		part, err := writer.CreateFormFile(name, filename)
+		if err != nil {
+			t.Fatalf("CreateFormFile() error = %v", err)
+		}
+		if _, err := part.Write(payload); err != nil {
+			t.Fatalf("multipart write error = %v", err)
+		}
+	}
+	for name, value := range fields {
+		if err := writer.WriteField(name, value); err != nil {
+			t.Fatalf("WriteField() error = %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("multipart Close() error = %v", err)
+	}
+	req := httptest.NewRequest(method, path, &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("%s %s error = %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	var decoded map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		t.Fatalf("decode %s %s response: %v", method, path, err)
+	}
+	return resp, decoded
+}
+
+func requestJSON(t *testing.T, app *fiber.App, method string, path string, body string) (*http.Response, map[string]any) {
+	t.Helper()
+	resp, raw := requestRaw(t, app, method, path, body, "application/json")
+	defer resp.Body.Close()
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("decode %s %s response: %v; body=%s", method, path, err, string(raw))
+	}
+	return resp, decoded
+}
+
+func requestRaw(t *testing.T, app *fiber.App, method string, path string, body string, contentType string) (*http.Response, []byte) {
+	t.Helper()
+	var reqBody io.Reader
+	if body != "" {
+		reqBody = bytes.NewBufferString(body)
+	}
+	req := httptest.NewRequest(method, path, reqBody)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("%s %s error = %v", method, path, err)
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read %s %s response: %v", method, path, err)
+	}
+	return resp, raw
+}
+
+func assertStatusOK(t *testing.T, resp *http.Response) {
+	t.Helper()
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func envelopeMap(t *testing.T, body map[string]any) map[string]any {
+	t.Helper()
+	if body["code"] != float64(200) {
+		t.Fatalf("code = %v, want 200; body=%v", body["code"], body)
+	}
+	return assertMap(t, body["data"])
+}
+
+func assertMap(t *testing.T, value any) map[string]any {
+	t.Helper()
+	item, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("value = %#v, want map", value)
+	}
+	return item
+}
+
+func assertSlice(t *testing.T, value any) []any {
+	t.Helper()
+	items, ok := value.([]any)
+	if !ok {
+		t.Fatalf("value = %#v, want slice", value)
+	}
+	return items
+}
+
+func itoa(value int) string {
+	if value == 0 {
+		return "0"
+	}
+	var digits [20]byte
+	i := len(digits)
+	for value > 0 {
+		i--
+		digits[i] = byte('0' + value%10)
+		value /= 10
+	}
+	return string(digits[i:])
+}

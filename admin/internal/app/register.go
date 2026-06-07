@@ -8,6 +8,7 @@ import (
 	"github.com/yuWorm/fba-go-template/admin/plugins/email"
 	"github.com/yuWorm/fba-go-template/admin/plugins/oauth2"
 	"github.com/yuWorm/fba-go-template/admin/plugins/task"
+	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile"
 	"github.com/yuWorm/fba-go/core/plugin"
 )
 
@@ -20,6 +21,7 @@ func Register(registry *plugin.Registry) error {
 		notice.FBAPlugin(),
 		oauth2.FBAPlugin(),
 		task.FBAPlugin(),
+		uploadfile.FBAPlugin(),
 	}
 	for _, module := range modules {
 		if err := registry.Add(module, plugin.ModeAuto); err != nil {

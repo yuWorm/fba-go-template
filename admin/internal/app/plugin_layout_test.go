@@ -6,6 +6,7 @@ import (
 	emailplugin "github.com/yuWorm/fba-go-template/admin/plugins/email"
 	oauth2plugin "github.com/yuWorm/fba-go-template/admin/plugins/oauth2"
 	taskplugin "github.com/yuWorm/fba-go-template/admin/plugins/task"
+	uploadfileplugin "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile"
 )
 
 func TestReferencePluginsLiveUnderTemplatePlugins(t *testing.T) {
@@ -16,6 +17,7 @@ func TestReferencePluginsLiveUnderTemplatePlugins(t *testing.T) {
 		{name: "email", id: emailplugin.FBAPlugin().Meta().ID},
 		{name: "oauth2", id: oauth2plugin.FBAPlugin().Meta().ID},
 		{name: "task", id: taskplugin.FBAPlugin().Meta().ID},
+		{name: "uploadfile", id: uploadfileplugin.FBAPlugin().Meta().ID},
 	} {
 		if tc.name != tc.id {
 			t.Fatalf("plugin %q meta ID = %q", tc.name, tc.id)

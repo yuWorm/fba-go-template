@@ -27,7 +27,7 @@ func TestRegisterIncludesDefaultBusinessModules(t *testing.T) {
 	for _, entry := range entries {
 		got[entry.Module.Meta().ID] = true
 	}
-	for _, id := range []string{"admin", "config", "dict", "email", "notice", "oauth2", "task"} {
+	for _, id := range []string{"admin", "config", "dict", "email", "notice", "oauth2", "task", "uploadfile"} {
 		if !got[id] {
 			t.Fatalf("module %q was not registered; got %v", id, got)
 		}
@@ -52,8 +52,8 @@ func TestDefaultModuleMigrationsSeedSQLInitialData(t *testing.T) {
 	}
 
 	migrations := ctx.Migrations()
-	if len(migrations) != 14 {
-		t.Fatalf("migration count = %d, want 14", len(migrations))
+	if len(migrations) != 16 {
+		t.Fatalf("migration count = %d, want 16", len(migrations))
 	}
 	for _, migration := range migrations {
 		if err := migration.Up(context.Background()); err != nil {
@@ -69,6 +69,8 @@ func TestDefaultModuleMigrationsSeedSQLInitialData(t *testing.T) {
 	assertTableCount(t, provider, "sys_notice", "title = 'hahahahahaahahaha'", 1)
 	assertTableCount(t, provider, "sys_user_social", "1 = 1", 0)
 	assertTableCount(t, provider, "task_scheduler", "name = 'Fixture'", 1)
+	assertTableCount(t, provider, "upload_storage", "code = 'local'", 1)
+	assertTableCount(t, provider, "upload_scene", "code in ('default', 'avatar', 'attachment')", 3)
 }
 
 func newSQLiteProvider(t *testing.T) db.Provider {
