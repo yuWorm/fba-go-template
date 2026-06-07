@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -97,6 +98,49 @@ func TestUploadAPIUploadsBindsListsSharesAndDownloads(t *testing.T) {
 	}
 	if string(raw) != "invoice body" {
 		t.Fatalf("download body = %q, want invoice body", string(raw))
+	}
+}
+
+func TestUploadAPIUpdatesLocalStorageConfigAndUsesIt(t *testing.T) {
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	svc := uploadservice.New(repository, storage.NewRegistry(), uploadservice.Options{TokenSecret: []byte("api-test-secret")})
+	app := newUploadApp(t, svc)
+	root := t.TempDir()
+	config, err := json.Marshal(map[string]string{"root": root})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"provider":   "local",
+		"prefix":     "managed",
+		"is_default": true,
+		"enabled":    true,
+		"config":     string(config),
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal(storage body) error = %v", err)
+	}
+
+	resp, decoded := requestJSON(t, app, http.MethodPut, "/api/v1/sys/upload/storages/local", string(body))
+	assertStatusOK(t, resp)
+	storageDetail := envelopeMap(t, decoded)
+	if storageDetail["prefix"] != "managed" {
+		t.Fatalf("storage prefix = %v, want managed", storageDetail["prefix"])
+	}
+
+	resp, decoded = requestMultipart(t, app, http.MethodPost, "/api/v1/sys/upload/files", map[string]string{
+		"file": "managed.txt",
+	}, map[string]string{
+		"scene_code": "default",
+	}, []byte("managed"))
+	assertStatusOK(t, resp)
+	file := assertMap(t, envelopeMap(t, decoded)["file"])
+	object, err := repository.GetObject(context.Background(), int(file["id"].(float64)))
+	if err != nil {
+		t.Fatalf("GetObject() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(object.ObjectKey))); err != nil {
+		t.Fatalf("stored object %q under managed root %q not found: %v", object.ObjectKey, root, err)
 	}
 }
 

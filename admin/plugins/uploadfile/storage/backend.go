@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -37,12 +38,28 @@ type Backend interface {
 	PublicURL(key string) string
 }
 
+type BackendConfig struct {
+	Code     string
+	Provider string
+	Bucket   *string
+	Region   *string
+	Endpoint *string
+	BaseURL  *string
+	Prefix   string
+	Config   *string
+}
+
+type Factory func(config BackendConfig) (Backend, error)
+
 type Registry struct {
-	backends map[string]Backend
+	backends  map[string]Backend
+	factories map[string]Factory
 }
 
 func NewRegistry() *Registry {
-	return &Registry{backends: map[string]Backend{}}
+	registry := &Registry{backends: map[string]Backend{}, factories: map[string]Factory{}}
+	registry.AddFactory("local", NewLocalFromConfig)
+	return registry
 }
 
 func (r *Registry) Add(code string, backend Backend) {
@@ -52,10 +69,42 @@ func (r *Registry) Add(code string, backend Backend) {
 	r.backends[code] = backend
 }
 
+func (r *Registry) AddFactory(provider string, factory Factory) {
+	if r.factories == nil {
+		r.factories = map[string]Factory{}
+	}
+	provider = strings.TrimSpace(provider)
+	if provider == "" || factory == nil {
+		return
+	}
+	r.factories[provider] = factory
+}
+
 func (r *Registry) Get(code string) (Backend, bool) {
 	if r == nil {
 		return nil, false
 	}
 	backend, ok := r.backends[code]
 	return backend, ok
+}
+
+func (r *Registry) Resolve(config BackendConfig) (Backend, bool, error) {
+	if r == nil {
+		return nil, false, nil
+	}
+	code := strings.TrimSpace(config.Code)
+	if code != "" {
+		if backend, ok := r.Get(code); ok {
+			return backend, true, nil
+		}
+	}
+	factory, ok := r.factories[strings.TrimSpace(config.Provider)]
+	if !ok {
+		return nil, false, nil
+	}
+	backend, err := factory(config)
+	if err != nil {
+		return nil, true, err
+	}
+	return backend, true, nil
 }

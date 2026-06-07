@@ -3,7 +3,6 @@ package uploadfile
 import (
 	uploadapi "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/api"
 	uploadmigration "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/migration"
-	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/model"
 	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/repo"
 	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/service"
 	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/storage"
@@ -42,7 +41,6 @@ func (Module) Register(ctx plugin.Context) error {
 	}
 
 	registry := storage.NewRegistry()
-	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{}))
 	svc := service.New(repository, registry, service.Options{
 		TokenSecret: []byte(ctx.Config().Auth.JWTSecret),
 	})

@@ -77,6 +77,65 @@ func (r *MemoryRepository) ListStorages(context.Context) ([]model.Storage, error
 	return append([]model.Storage(nil), r.storages...), nil
 }
 
+func (r *MemoryRepository) CreateStorage(_ context.Context, param SaveStorageParam) (model.Storage, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if param.IsDefault {
+		r.unsetDefaultStorageLocked()
+	}
+	item := storageFromParam(r.nextStorageIDLocked(), param)
+	r.storages = append(r.storages, item)
+	return item, nil
+}
+
+func (r *MemoryRepository) UpdateStorage(_ context.Context, code string, param SaveStorageParam) (model.Storage, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.storages {
+		if r.storages[i].Code != code {
+			continue
+		}
+		if param.IsDefault {
+			r.unsetDefaultStorageLocked()
+		}
+		item := storageFromParam(r.storages[i].ID, param)
+		now := time.Now()
+		item.CreatedTime = r.storages[i].CreatedTime
+		item.UpdatedTime = &now
+		r.storages[i] = item
+		return item, nil
+	}
+	return model.Storage{}, ErrNotFound
+}
+
+func (r *MemoryRepository) DeleteStorage(_ context.Context, code string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.storages {
+		if r.storages[i].Code == code {
+			r.storages = append(r.storages[:i], r.storages[i+1:]...)
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+func (r *MemoryRepository) nextStorageIDLocked() int {
+	maxID := 0
+	for _, item := range r.storages {
+		if item.ID > maxID {
+			maxID = item.ID
+		}
+	}
+	return maxID + 1
+}
+
+func (r *MemoryRepository) unsetDefaultStorageLocked() {
+	for i := range r.storages {
+		r.storages[i].IsDefault = false
+	}
+}
+
 func (r *MemoryRepository) CreateObject(_ context.Context, param CreateObjectParam) (model.FileObject, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -422,4 +481,21 @@ func stringPtrValue(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func storageFromParam(id int, param SaveStorageParam) model.Storage {
+	return model.Storage{
+		ID:          id,
+		Code:        param.Code,
+		Provider:    param.Provider,
+		Bucket:      param.Bucket,
+		Region:      param.Region,
+		Endpoint:    param.Endpoint,
+		BaseURL:     param.BaseURL,
+		Prefix:      param.Prefix,
+		IsDefault:   param.IsDefault,
+		Enabled:     param.Enabled,
+		Config:      param.Config,
+		CreatedTime: time.Now(),
+	}
 }

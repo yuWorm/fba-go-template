@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -17,6 +18,11 @@ type LocalOptions struct {
 	BaseURL string
 }
 
+type LocalConfig struct {
+	Root    string `json:"root"`
+	BaseURL string `json:"base_url"`
+}
+
 type Local struct {
 	root    string
 	baseURL string
@@ -28,6 +34,20 @@ func NewLocal(opts LocalOptions) *Local {
 		root = ".cache/uploadfile"
 	}
 	return &Local{root: root, baseURL: strings.TrimRight(opts.BaseURL, "/")}
+}
+
+func NewLocalFromConfig(config BackendConfig) (Backend, error) {
+	var localConfig LocalConfig
+	if config.Config != nil && strings.TrimSpace(*config.Config) != "" {
+		if err := json.Unmarshal([]byte(*config.Config), &localConfig); err != nil {
+			return nil, err
+		}
+	}
+	baseURL := localConfig.BaseURL
+	if config.BaseURL != nil && strings.TrimSpace(*config.BaseURL) != "" {
+		baseURL = strings.TrimSpace(*config.BaseURL)
+	}
+	return NewLocal(LocalOptions{Root: localConfig.Root, BaseURL: baseURL}), nil
 }
 
 func (b *Local) Put(_ context.Context, key string, r io.Reader, opts PutOptions) (ObjectInfo, error) {

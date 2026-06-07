@@ -77,6 +77,19 @@ type StorageDetail struct {
 	Enabled   bool    `json:"enabled"`
 }
 
+type StorageParam struct {
+	Code      string  `json:"code"`
+	Provider  string  `json:"provider"`
+	Bucket    *string `json:"bucket"`
+	Region    *string `json:"region"`
+	Endpoint  *string `json:"endpoint"`
+	BaseURL   *string `json:"base_url"`
+	Prefix    string  `json:"prefix"`
+	IsDefault *bool   `json:"is_default"`
+	Enabled   *bool   `json:"enabled"`
+	Config    *string `json:"config"`
+}
+
 type ShareDetail struct {
 	ID            int     `json:"id"`
 	FileID        int     `json:"file_id"`

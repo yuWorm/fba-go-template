@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -178,6 +180,119 @@ func TestServiceUploadsBindsSharesAndDownloadsLocalFiles(t *testing.T) {
 	}
 }
 
+func TestServiceResolvesLocalBackendFromStorageConfig(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	storageConfigJSON := `{"root":` + quoteJSON(root) + `,"base_url":"https://cdn.example.test/files"}`
+	archive := "archive"
+	repository := repo.NewMemoryRepository(repo.Seed{
+		Storages: []model.Storage{
+			{
+				ID:        1,
+				Code:      archive,
+				Provider:  model.ProviderLocal,
+				Prefix:    "custom",
+				BaseURL:   strPtr("https://cdn.example.test/files"),
+				IsDefault: true,
+				Enabled:   true,
+				Config:    &storageConfigJSON,
+			},
+		},
+		Scenes: []model.Scene{
+			{
+				ID:                 1,
+				Code:               "archive",
+				Name:               "Archive",
+				MaxSize:            1024,
+				AllowedExts:        strPtr(`["txt"]`),
+				DefaultStorageCode: &archive,
+				DefaultVisibility:  model.VisibilityPrivate,
+				TempTTLSeconds:     60,
+				Enabled:            true,
+			},
+		},
+	})
+	svc := service.New(repository, storage.NewRegistry(), service.Options{TokenSecret: []byte("test-secret")})
+
+	uploaded, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "archive.txt",
+		ContentType: "text/plain",
+		Size:        7,
+		Reader:      strings.NewReader("archive"),
+		SceneCode:   "archive",
+	})
+	if err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+	if uploaded.File.StorageCode != archive {
+		t.Fatalf("storage_code = %q, want archive", uploaded.File.StorageCode)
+	}
+	object, err := repository.GetObject(ctx, uploaded.File.ID)
+	if err != nil {
+		t.Fatalf("GetObject() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(object.ObjectKey))); err != nil {
+		t.Fatalf("stored object %q under root %q not found: %v", object.ObjectKey, root, err)
+	}
+}
+
+func TestServiceUsesUpdatedStorageConfigAfterPreviousUpload(t *testing.T) {
+	ctx := context.Background()
+	root1 := t.TempDir()
+	root2 := t.TempDir()
+	config1 := `{"root":` + quoteJSON(root1) + `}`
+	seed := repo.SeedData()
+	seed.Storages[0].Config = &config1
+	repository := repo.NewMemoryRepository(seed)
+	svc := service.New(repository, storage.NewRegistry(), service.Options{TokenSecret: []byte("test-secret")})
+
+	first, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "first.txt",
+		ContentType: "text/plain",
+		Size:        5,
+		Reader:      strings.NewReader("first"),
+		SceneCode:   model.DefaultSceneCode,
+	})
+	if err != nil {
+		t.Fatalf("first Upload() error = %v", err)
+	}
+	firstObject, err := repository.GetObject(ctx, first.File.ID)
+	if err != nil {
+		t.Fatalf("GetObject(first) error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root1, filepath.FromSlash(firstObject.ObjectKey))); err != nil {
+		t.Fatalf("first object not stored under root1: %v", err)
+	}
+
+	config2 := `{"root":` + quoteJSON(root2) + `}`
+	if _, err := svc.UpdateStorage(ctx, model.DefaultStorageCode, dto.StorageParam{
+		Provider:  model.ProviderLocal,
+		Prefix:    "uploads",
+		IsDefault: boolPtr(true),
+		Enabled:   boolPtr(true),
+		Config:    &config2,
+	}); err != nil {
+		t.Fatalf("UpdateStorage() error = %v", err)
+	}
+	second, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "second.txt",
+		ContentType: "text/plain",
+		Size:        6,
+		Reader:      strings.NewReader("second"),
+		SceneCode:   model.DefaultSceneCode,
+	})
+	if err != nil {
+		t.Fatalf("second Upload() error = %v", err)
+	}
+	secondObject, err := repository.GetObject(ctx, second.File.ID)
+	if err != nil {
+		t.Fatalf("GetObject(second) error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root2, filepath.FromSlash(secondObject.ObjectKey))); err != nil {
+		t.Fatalf("second object not stored under updated root2: %v", err)
+	}
+}
+
 func TestServiceValidatesSceneExtensionAndSize(t *testing.T) {
 	ctx := context.Background()
 	repository := repo.NewMemoryRepository(repo.SeedData())
@@ -207,4 +322,21 @@ func TestServiceValidatesSceneExtensionAndSize(t *testing.T) {
 
 func intPtr(value int) *int {
 	return &value
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
+
+func quoteJSON(value string) string {
+	quoted := strings.Builder{}
+	quoted.WriteByte('"')
+	for _, r := range value {
+		if r == '\\' || r == '"' {
+			quoted.WriteByte('\\')
+		}
+		quoted.WriteRune(r)
+	}
+	quoted.WriteByte('"')
+	return quoted.String()
 }

@@ -272,6 +272,45 @@ func (s *Service) ListStorages(ctx context.Context) ([]dto.StorageDetail, error)
 	return result, nil
 }
 
+func (s *Service) CreateStorage(ctx context.Context, param dto.StorageParam) (dto.StorageDetail, error) {
+	save, err := storageParamForCreate(param)
+	if err != nil {
+		return dto.StorageDetail{}, err
+	}
+	item, err := s.repo.CreateStorage(ctx, save)
+	if err != nil {
+		return dto.StorageDetail{}, err
+	}
+	return dto.StorageDetailFromModel(item), nil
+}
+
+func (s *Service) UpdateStorage(ctx context.Context, code string, param dto.StorageParam) (dto.StorageDetail, error) {
+	current, err := s.repo.GetStorage(ctx, strings.TrimSpace(code))
+	if err != nil {
+		return dto.StorageDetail{}, notFound("storage not found", err)
+	}
+	save, err := storageParamForUpdate(current, param)
+	if err != nil {
+		return dto.StorageDetail{}, err
+	}
+	item, err := s.repo.UpdateStorage(ctx, current.Code, save)
+	if err != nil {
+		return dto.StorageDetail{}, err
+	}
+	return dto.StorageDetailFromModel(item), nil
+}
+
+func (s *Service) DeleteStorage(ctx context.Context, code string) error {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return badRequest("storage code is required", nil)
+	}
+	if code == model.DefaultStorageCode {
+		return badRequest("default local storage cannot be deleted", nil)
+	}
+	return s.repo.DeleteStorage(ctx, code)
+}
+
 func (s *Service) DeleteFiles(ctx context.Context, ids []int) error {
 	if len(ids) == 0 {
 		return badRequest("pks is required", nil)
@@ -429,9 +468,120 @@ func (s *Service) backend(ctx context.Context, scene model.Scene) (model.Storage
 	}
 	backend, ok := s.storage.Get(storageConfig.Code)
 	if !ok {
-		return model.Storage{}, nil, notFound("storage backend not found", nil)
+		var err error
+		backend, ok, err = s.storage.Resolve(storageBackendConfig(storageConfig))
+		if err != nil {
+			return model.Storage{}, nil, badRequest("storage config invalid", err)
+		}
+		if !ok {
+			return model.Storage{}, nil, notFound("storage backend not found", nil)
+		}
 	}
 	return storageConfig, backend, nil
+}
+
+func storageBackendConfig(item model.Storage) storage.BackendConfig {
+	return storage.BackendConfig{
+		Code:     item.Code,
+		Provider: item.Provider,
+		Bucket:   item.Bucket,
+		Region:   item.Region,
+		Endpoint: item.Endpoint,
+		BaseURL:  item.BaseURL,
+		Prefix:   item.Prefix,
+		Config:   item.Config,
+	}
+}
+
+func storageParamForCreate(param dto.StorageParam) (repo.SaveStorageParam, error) {
+	code := strings.TrimSpace(param.Code)
+	if code == "" {
+		return repo.SaveStorageParam{}, badRequest("storage code is required", nil)
+	}
+	provider := strings.TrimSpace(param.Provider)
+	if provider == "" {
+		provider = model.ProviderLocal
+	}
+	if err := validateStorageProvider(provider); err != nil {
+		return repo.SaveStorageParam{}, err
+	}
+	if err := validateStorageConfig(param.Config); err != nil {
+		return repo.SaveStorageParam{}, err
+	}
+	isDefault := boolValue(param.IsDefault, false)
+	enabled := boolValue(param.Enabled, true)
+	return repo.SaveStorageParam{
+		Code:      code,
+		Provider:  provider,
+		Bucket:    cleanOptional(param.Bucket),
+		Region:    cleanOptional(param.Region),
+		Endpoint:  cleanOptional(param.Endpoint),
+		BaseURL:   cleanOptional(param.BaseURL),
+		Prefix:    defaultString(strings.Trim(strings.TrimSpace(param.Prefix), "/"), "uploads"),
+		IsDefault: isDefault,
+		Enabled:   enabled,
+		Config:    cleanOptional(param.Config),
+	}, nil
+}
+
+func storageParamForUpdate(current model.Storage, param dto.StorageParam) (repo.SaveStorageParam, error) {
+	if strings.TrimSpace(param.Code) == "" {
+		param.Code = current.Code
+	}
+	if strings.TrimSpace(param.Provider) == "" {
+		param.Provider = current.Provider
+	}
+	if strings.TrimSpace(param.Prefix) == "" {
+		param.Prefix = current.Prefix
+	}
+	if param.Bucket == nil {
+		param.Bucket = current.Bucket
+	}
+	if param.Region == nil {
+		param.Region = current.Region
+	}
+	if param.Endpoint == nil {
+		param.Endpoint = current.Endpoint
+	}
+	if param.BaseURL == nil {
+		param.BaseURL = current.BaseURL
+	}
+	if param.Config == nil {
+		param.Config = current.Config
+	}
+	if param.IsDefault == nil {
+		param.IsDefault = &current.IsDefault
+	}
+	if param.Enabled == nil {
+		param.Enabled = &current.Enabled
+	}
+	return storageParamForCreate(param)
+}
+
+func validateStorageProvider(provider string) error {
+	switch provider {
+	case model.ProviderLocal, model.ProviderS3, model.ProviderOSS:
+		return nil
+	default:
+		return badRequest("storage provider is not supported", nil)
+	}
+}
+
+func validateStorageConfig(config *string) error {
+	if config == nil || strings.TrimSpace(*config) == "" {
+		return nil
+	}
+	if !json.Valid([]byte(*config)) {
+		return badRequest("storage config must be valid JSON", nil)
+	}
+	return nil
+}
+
+func boolValue(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
 }
 
 func (s *Service) fileURL(object model.FileObject) string {

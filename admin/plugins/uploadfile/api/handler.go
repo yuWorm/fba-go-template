@@ -161,6 +161,37 @@ func (h Handler) ListStorages(c fiber.Ctx) error {
 	return c.JSON(response.Success(items))
 }
 
+func (h Handler) CreateStorage(c fiber.Ctx) error {
+	var param dto.StorageParam
+	if err := c.Bind().Body(&param); err != nil {
+		return err
+	}
+	item, err := h.service.CreateStorage(c.RequestCtx(), param)
+	if err != nil {
+		return err
+	}
+	return c.JSON(response.Success(item))
+}
+
+func (h Handler) UpdateStorage(c fiber.Ctx) error {
+	var param dto.StorageParam
+	if err := c.Bind().Body(&param); err != nil {
+		return err
+	}
+	item, err := h.service.UpdateStorage(c.RequestCtx(), c.Params("code"), param)
+	if err != nil {
+		return err
+	}
+	return c.JSON(response.Success(item))
+}
+
+func (h Handler) DeleteStorage(c fiber.Ctx) error {
+	if err := h.service.DeleteStorage(c.RequestCtx(), c.Params("code")); err != nil {
+		return err
+	}
+	return c.JSON(response.Success[any](nil))
+}
+
 func (h Handler) CreateShare(c fiber.Ctx) error {
 	var param dto.ShareCreateParam
 	if err := c.Bind().Body(&param); err != nil {

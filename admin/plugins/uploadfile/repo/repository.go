@@ -92,12 +92,28 @@ type CreateShareParam struct {
 	CreatedBy    *int
 }
 
+type SaveStorageParam struct {
+	Code      string
+	Provider  string
+	Bucket    *string
+	Region    *string
+	Endpoint  *string
+	BaseURL   *string
+	Prefix    string
+	IsDefault bool
+	Enabled   bool
+	Config    *string
+}
+
 type Repository interface {
 	GetScene(ctx context.Context, code string) (model.Scene, error)
 	ListScenes(ctx context.Context) ([]model.Scene, error)
 	GetStorage(ctx context.Context, code string) (model.Storage, error)
 	GetDefaultStorage(ctx context.Context) (model.Storage, error)
 	ListStorages(ctx context.Context) ([]model.Storage, error)
+	CreateStorage(ctx context.Context, param SaveStorageParam) (model.Storage, error)
+	UpdateStorage(ctx context.Context, code string, param SaveStorageParam) (model.Storage, error)
+	DeleteStorage(ctx context.Context, code string) error
 	CreateObject(ctx context.Context, param CreateObjectParam) (model.FileObject, error)
 	GetObject(ctx context.Context, id int) (model.FileObject, error)
 	GetObjectByUUID(ctx context.Context, uuid string) (model.FileObject, error)

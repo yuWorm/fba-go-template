@@ -48,6 +48,68 @@ func (r *GORMRepository) ListStorages(ctx context.Context) ([]model.Storage, err
 	return items, err
 }
 
+func (r *GORMRepository) CreateStorage(ctx context.Context, param SaveStorageParam) (model.Storage, error) {
+	item := storageFromParam(0, param)
+	err := r.provider.Transaction(ctx, func(tx *gorm.DB) error {
+		if item.IsDefault {
+			if err := tx.Model(&model.Storage{}).Where("is_default = ?", true).Update("is_default", false).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(&item).Error
+	})
+	if err != nil {
+		return model.Storage{}, err
+	}
+	return item, nil
+}
+
+func (r *GORMRepository) UpdateStorage(ctx context.Context, code string, param SaveStorageParam) (model.Storage, error) {
+	err := r.provider.Transaction(ctx, func(tx *gorm.DB) error {
+		if param.IsDefault {
+			if err := tx.Model(&model.Storage{}).Where("is_default = ?", true).Update("is_default", false).Error; err != nil {
+				return err
+			}
+		}
+		updates := map[string]any{
+			"code":         param.Code,
+			"provider":     param.Provider,
+			"bucket":       param.Bucket,
+			"region":       param.Region,
+			"endpoint":     param.Endpoint,
+			"base_url":     param.BaseURL,
+			"prefix":       param.Prefix,
+			"is_default":   param.IsDefault,
+			"enabled":      param.Enabled,
+			"config":       param.Config,
+			"updated_time": time.Now(),
+		}
+		result := tx.Model(&model.Storage{}).Where("code = ?", code).Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+	if err != nil {
+		return model.Storage{}, err
+	}
+	return r.GetStorage(ctx, param.Code)
+}
+
+func (r *GORMRepository) DeleteStorage(ctx context.Context, code string) error {
+	result := r.provider.Write().WithContext(ctx).Where("code = ?", code).Delete(&model.Storage{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *GORMRepository) CreateObject(ctx context.Context, param CreateObjectParam) (model.FileObject, error) {
 	item := model.FileObject{
 		UUID:         param.UUID,
