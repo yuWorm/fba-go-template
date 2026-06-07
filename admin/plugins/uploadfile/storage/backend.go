@@ -32,6 +32,7 @@ type PresignedURL struct {
 type Backend interface {
 	Put(ctx context.Context, key string, r io.Reader, opts PutOptions) (ObjectInfo, error)
 	Open(ctx context.Context, key string) (io.ReadCloser, ObjectInfo, error)
+	Head(ctx context.Context, key string) (ObjectInfo, error)
 	Delete(ctx context.Context, key string) error
 	PresignPut(ctx context.Context, key string, ttl time.Duration, opts PutOptions) (PresignedURL, error)
 	PresignGet(ctx context.Context, key string, ttl time.Duration) (PresignedURL, error)

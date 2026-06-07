@@ -220,6 +220,15 @@ func (r *GORMRepository) ListObjects(ctx context.Context, filter ObjectFilter, p
 	return paginateGORM[model.FileObject](query.Order("id ASC"), page, size)
 }
 
+func (r *GORMRepository) ListPendingObjectsBefore(ctx context.Context, before time.Time) ([]model.FileObject, error) {
+	var items []model.FileObject
+	err := r.provider.Read().WithContext(ctx).
+		Where("status = ? AND created_time <= ?", model.StatusPending, before).
+		Order("id ASC").
+		Find(&items).Error
+	return items, err
+}
+
 func (r *GORMRepository) UpdateObjectStatus(ctx context.Context, id int, status string) error {
 	updates := map[string]any{
 		"status":       status,

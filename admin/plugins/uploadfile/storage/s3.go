@@ -38,6 +38,7 @@ type S3 struct {
 type s3API interface {
 	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
 	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 
@@ -138,6 +139,29 @@ func (b *S3) Open(ctx context.Context, key string) (io.ReadCloser, ObjectInfo, e
 		return nil, ObjectInfo{}, err
 	}
 	return output.Body, ObjectInfo{
+		Key:         clean,
+		Size:        aws.ToInt64(output.ContentLength),
+		ContentType: aws.ToString(output.ContentType),
+		ETag:        output.ETag,
+	}, nil
+}
+
+func (b *S3) Head(ctx context.Context, key string) (ObjectInfo, error) {
+	if b.client == nil {
+		return ObjectInfo{}, fmt.Errorf("s3 client is required")
+	}
+	clean, err := cleanS3Key(key)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	output, err := b.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(b.bucket),
+		Key:    aws.String(clean),
+	})
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	return ObjectInfo{
 		Key:         clean,
 		Size:        aws.ToInt64(output.ContentLength),
 		ContentType: aws.ToString(output.ContentType),

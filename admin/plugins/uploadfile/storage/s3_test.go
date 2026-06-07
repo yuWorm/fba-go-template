@@ -42,6 +42,13 @@ func TestS3BackendPutOpenDeleteAndPublicURL(t *testing.T) {
 	if !bytes.Equal(body, []byte("hello")) || opened.Size != 5 || opened.ContentType != "text/plain" {
 		t.Fatalf("Open() body=%q info=%+v", body, opened)
 	}
+	headed, err := backend.Head(context.Background(), "uploads/a file.txt")
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	if headed.Size != 5 || headed.ContentType != "text/plain" || headed.ETag == nil {
+		t.Fatalf("Head() info = %+v", headed)
+	}
 	if url := backend.PublicURL("uploads/a file.txt"); url != "https://cdn.example.test/files/uploads/a%20file.txt" {
 		t.Fatalf("PublicURL() = %q", url)
 	}
@@ -115,6 +122,19 @@ func (c *fakeS3Client) GetObject(_ context.Context, input *s3.GetObjectInput, _ 
 	size := int64(len(object.body))
 	return &s3.GetObjectOutput{
 		Body:          io.NopCloser(bytes.NewReader(object.body)),
+		ContentLength: &size,
+		ContentType:   aws.String(object.contentType),
+		ETag:          aws.String(object.etag),
+	}, nil
+}
+
+func (c *fakeS3Client) HeadObject(_ context.Context, input *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+	object, ok := c.objects[aws.ToString(input.Key)]
+	if !ok {
+		return nil, errFakeS3NotFound
+	}
+	size := int64(len(object.body))
+	return &s3.HeadObjectOutput{
 		ContentLength: &size,
 		ContentType:   aws.String(object.contentType),
 		ETag:          aws.String(object.etag),

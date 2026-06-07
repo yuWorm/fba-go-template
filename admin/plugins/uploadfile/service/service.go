@@ -22,20 +22,24 @@ import (
 
 type Clock func() time.Time
 
+const defaultFileAccessTokenMaxTTL = time.Hour
+
 type Options struct {
 	TokenSecret            []byte
 	Now                    Clock
 	DownloadTokenTTL       time.Duration
+	FileAccessTokenMaxTTL  time.Duration
 	DirectUploadPresignTTL time.Duration
 }
 
 type Service struct {
-	repo            repo.Repository
-	storage         *storage.Registry
-	secret          []byte
-	now             Clock
-	tokenTTL        time.Duration
-	directUploadTTL time.Duration
+	repo              repo.Repository
+	storage           *storage.Registry
+	secret            []byte
+	now               Clock
+	tokenTTL          time.Duration
+	accessTokenMaxTTL time.Duration
+	directUploadTTL   time.Duration
 }
 
 type UploadInput struct {
@@ -89,7 +93,8 @@ type ShareInput struct {
 }
 
 type CleanupOptions struct {
-	DryRun bool
+	DryRun     bool
+	PendingTTL time.Duration
 }
 
 type FileAccessTokenInput struct {
@@ -114,16 +119,20 @@ func New(repository repo.Repository, registry *storage.Registry, opts Options) *
 	if opts.DownloadTokenTTL <= 0 {
 		opts.DownloadTokenTTL = 10 * time.Minute
 	}
+	if opts.FileAccessTokenMaxTTL <= 0 {
+		opts.FileAccessTokenMaxTTL = defaultFileAccessTokenMaxTTL
+	}
 	if opts.DirectUploadPresignTTL <= 0 {
 		opts.DirectUploadPresignTTL = 15 * time.Minute
 	}
 	return &Service{
-		repo:            repository,
-		storage:         registry,
-		secret:          opts.TokenSecret,
-		now:             opts.Now,
-		tokenTTL:        opts.DownloadTokenTTL,
-		directUploadTTL: opts.DirectUploadPresignTTL,
+		repo:              repository,
+		storage:           registry,
+		secret:            opts.TokenSecret,
+		now:               opts.Now,
+		tokenTTL:          opts.DownloadTokenTTL,
+		accessTokenMaxTTL: opts.FileAccessTokenMaxTTL,
+		directUploadTTL:   opts.DirectUploadPresignTTL,
 	}
 }
 
@@ -350,6 +359,9 @@ func (s *Service) CompletePresignedUpload(ctx context.Context, id int, actor Act
 		return dto.FileDetail{}, badRequest("file is deleted", nil)
 	}
 	if object.Status != model.StatusActive {
+		if err := s.validatePresignedUploadObject(ctx, object); err != nil {
+			return dto.FileDetail{}, err
+		}
 		if err := s.repo.UpdateObjectStatus(ctx, id, model.StatusActive); err != nil {
 			return dto.FileDetail{}, err
 		}
@@ -461,6 +473,12 @@ func (s *Service) CreateFileAccessToken(ctx context.Context, id int, input FileA
 	ttl := input.TTL
 	if ttl <= 0 {
 		ttl = s.tokenTTL
+		if ttl > s.accessTokenMaxTTL {
+			ttl = s.accessTokenMaxTTL
+		}
+	}
+	if input.TTL > s.accessTokenMaxTTL {
+		return dto.FileAccessToken{}, badRequest("file access token ttl exceeds limit", nil)
 	}
 	expiresAt := s.now().Add(ttl)
 	token := signFileAccessToken(s.secret, object.UUID, expiresAt)
@@ -617,55 +635,128 @@ func (s *Service) CleanupExpiredTemps(ctx context.Context, opts CleanupOptions) 
 		return dto.CleanupResult{}, err
 	}
 	result := dto.CleanupResult{ExpiredRefs: len(expired)}
-	if len(expired) == 0 {
-		return result, nil
+	deletedFileIDs := map[int]bool{}
+	if len(expired) > 0 {
+		refIDs := make([]int, 0, len(expired))
+		expiredRefIDsByFile := make(map[int]map[int]bool, len(expired))
+		for _, ref := range expired {
+			refIDs = append(refIDs, ref.ID)
+			if expiredRefIDsByFile[ref.FileID] == nil {
+				expiredRefIDsByFile[ref.FileID] = map[int]bool{}
+			}
+			expiredRefIDsByFile[ref.FileID][ref.ID] = true
+		}
+		if !opts.DryRun && len(refIDs) > 0 {
+			if err := s.repo.UpdateRefsStatus(ctx, refIDs, model.RefStatusDeleted); err != nil {
+				return dto.CleanupResult{}, err
+			}
+		}
+		for fileID, expiredRefIDs := range expiredRefIDsByFile {
+			remaining, err := s.countRemainingLiveRefsAfterCleanup(ctx, fileID, expiredRefIDs, opts.DryRun)
+			if err != nil {
+				return dto.CleanupResult{}, err
+			}
+			if remaining > 0 {
+				continue
+			}
+			object, err := s.repo.GetObject(ctx, fileID)
+			if err != nil {
+				return dto.CleanupResult{}, err
+			}
+			if object.Status == model.StatusDeleted {
+				continue
+			}
+			if opts.DryRun {
+				result.DeletedFiles++
+				deletedFileIDs[object.ID] = true
+				continue
+			}
+			backend, err := s.backendForObject(ctx, object)
+			if err != nil {
+				return dto.CleanupResult{}, err
+			}
+			if err := backend.Delete(ctx, object.ObjectKey); err != nil {
+				return dto.CleanupResult{}, err
+			}
+			if err := s.repo.UpdateObjectStatus(ctx, object.ID, model.StatusDeleted); err != nil {
+				return dto.CleanupResult{}, err
+			}
+			result.DeletedFiles++
+			deletedFileIDs[object.ID] = true
+		}
 	}
-	refIDs := make([]int, 0, len(expired))
-	expiredRefIDsByFile := make(map[int]map[int]bool, len(expired))
-	for _, ref := range expired {
-		refIDs = append(refIDs, ref.ID)
-		if expiredRefIDsByFile[ref.FileID] == nil {
-			expiredRefIDsByFile[ref.FileID] = map[int]bool{}
-		}
-		expiredRefIDsByFile[ref.FileID][ref.ID] = true
+	if err := s.cleanupPendingUploads(ctx, opts, deletedFileIDs, &result); err != nil {
+		return dto.CleanupResult{}, err
 	}
-	if !opts.DryRun && len(refIDs) > 0 {
-		if err := s.repo.UpdateRefsStatus(ctx, refIDs, model.RefStatusDeleted); err != nil {
-			return dto.CleanupResult{}, err
-		}
+	return result, nil
+}
+
+func (s *Service) validatePresignedUploadObject(ctx context.Context, object model.FileObject) error {
+	backend, err := s.backendForObject(ctx, object)
+	if err != nil {
+		return err
 	}
-	for fileID, expiredRefIDs := range expiredRefIDsByFile {
-		remaining, err := s.countRemainingLiveRefsAfterCleanup(ctx, fileID, expiredRefIDs, opts.DryRun)
-		if err != nil {
-			return dto.CleanupResult{}, err
-		}
-		if remaining > 0 {
-			continue
-		}
-		object, err := s.repo.GetObject(ctx, fileID)
-		if err != nil {
-			return dto.CleanupResult{}, err
-		}
+	info, err := backend.Head(ctx, object.ObjectKey)
+	if err != nil {
+		return badRequest("uploaded object is not available", err)
+	}
+	if info.Size != object.Size {
+		return badRequest("uploaded object size mismatch", nil)
+	}
+	if strings.TrimSpace(info.ContentType) != "" && strings.TrimSpace(object.Mime) != "" && strings.TrimSpace(info.ContentType) != strings.TrimSpace(object.Mime) {
+		return badRequest("uploaded object MIME type mismatch", nil)
+	}
+	return nil
+}
+
+func (s *Service) cleanupPendingUploads(ctx context.Context, opts CleanupOptions, deletedFileIDs map[int]bool, result *dto.CleanupResult) error {
+	pendingTTL := opts.PendingTTL
+	if pendingTTL <= 0 {
+		pendingTTL = s.directUploadTTL
+	}
+	pending, err := s.repo.ListPendingObjectsBefore(ctx, s.now().Add(-pendingTTL))
+	if err != nil {
+		return err
+	}
+	for _, object := range pending {
 		if object.Status == model.StatusDeleted {
 			continue
 		}
-		if opts.DryRun {
+		result.PendingFiles++
+		if !deletedFileIDs[object.ID] {
 			result.DeletedFiles++
+			deletedFileIDs[object.ID] = true
+		}
+		if opts.DryRun {
 			continue
 		}
 		backend, err := s.backendForObject(ctx, object)
 		if err != nil {
-			return dto.CleanupResult{}, err
+			return err
 		}
 		if err := backend.Delete(ctx, object.ObjectKey); err != nil {
-			return dto.CleanupResult{}, err
+			return err
+		}
+		refs, err := s.refsForFile(ctx, object.ID)
+		if err != nil {
+			return err
+		}
+		refIDs := make([]int, 0, len(refs))
+		for _, ref := range refs {
+			if ref.Status != model.RefStatusDeleted {
+				refIDs = append(refIDs, ref.ID)
+			}
+		}
+		if len(refIDs) > 0 {
+			if err := s.repo.UpdateRefsStatus(ctx, refIDs, model.RefStatusDeleted); err != nil {
+				return err
+			}
 		}
 		if err := s.repo.UpdateObjectStatus(ctx, object.ID, model.StatusDeleted); err != nil {
-			return dto.CleanupResult{}, err
+			return err
 		}
-		result.DeletedFiles++
 	}
-	return result, nil
+	return nil
 }
 
 func (s *Service) countRemainingLiveRefsAfterCleanup(ctx context.Context, fileID int, expiredRefIDs map[int]bool, dryRun bool) (int64, error) {

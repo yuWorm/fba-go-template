@@ -38,6 +38,13 @@ func TestLocalBackendWritesReadsDeletesAndRejectsTraversal(t *testing.T) {
 	if !bytes.Equal(body, []byte("hello")) || opened.Size != 5 {
 		t.Fatalf("opened body=%q info=%+v", body, opened)
 	}
+	headed, err := backend.Head(ctx, info.Key)
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	if headed.Key != info.Key || headed.Size != 5 {
+		t.Fatalf("Head() info = %+v", headed)
+	}
 
 	if err := backend.Delete(ctx, info.Key); err != nil {
 		t.Fatalf("Delete() error = %v", err)

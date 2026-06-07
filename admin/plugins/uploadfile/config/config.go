@@ -35,6 +35,11 @@ type Options struct {
 	DefaultTempTTLSeconds int
 	DefaultAllowedExts    string
 	DefaultAllowedMimes   string
+
+	DownloadTokenTTLSeconds       int
+	FileAccessTokenMaxTTLSeconds  int
+	DirectUploadPresignTTLSeconds int
+	PendingUploadTTLSeconds       int
 }
 
 func Load(opts LoadOptions) (Options, error) {
@@ -204,6 +209,18 @@ func optionsFromValues(values map[string]string) (Options, error) {
 		return Options{}, err
 	}
 	opts.DefaultTempTTLSeconds = ttl
+	if opts.DownloadTokenTTLSeconds, err = intValue(values, "UPLOADFILE_DOWNLOAD_TOKEN_TTL_SECONDS"); err != nil {
+		return Options{}, err
+	}
+	if opts.FileAccessTokenMaxTTLSeconds, err = intValue(values, "UPLOADFILE_FILE_ACCESS_TOKEN_MAX_TTL_SECONDS"); err != nil {
+		return Options{}, err
+	}
+	if opts.DirectUploadPresignTTLSeconds, err = intValue(values, "UPLOADFILE_DIRECT_UPLOAD_PRESIGN_TTL_SECONDS"); err != nil {
+		return Options{}, err
+	}
+	if opts.PendingUploadTTLSeconds, err = intValue(values, "UPLOADFILE_PENDING_UPLOAD_TTL_SECONDS"); err != nil {
+		return Options{}, err
+	}
 	return opts, nil
 }
 
@@ -289,6 +306,10 @@ var uploadfileEnvKeys = []string{
 	"UPLOADFILE_DEFAULT_TEMP_TTL_SECONDS",
 	"UPLOADFILE_DEFAULT_ALLOWED_EXTS",
 	"UPLOADFILE_DEFAULT_ALLOWED_MIMES",
+	"UPLOADFILE_DOWNLOAD_TOKEN_TTL_SECONDS",
+	"UPLOADFILE_FILE_ACCESS_TOKEN_MAX_TTL_SECONDS",
+	"UPLOADFILE_DIRECT_UPLOAD_PRESIGN_TTL_SECONDS",
+	"UPLOADFILE_PENDING_UPLOAD_TTL_SECONDS",
 }
 
 func boolValue(values map[string]string, key string) (bool, error) {

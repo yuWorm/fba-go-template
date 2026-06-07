@@ -338,6 +338,56 @@ func TestServiceCreatesTemporaryAccessTokenForPrivateFile(t *testing.T) {
 	}
 }
 
+func TestServiceRejectsFileAccessTokenTTLAboveMax(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := service.New(repository, registry, service.Options{
+		Now:                   func() time.Time { return now },
+		TokenSecret:           []byte("test-secret"),
+		DownloadTokenTTL:      time.Hour,
+		FileAccessTokenMaxTTL: 30 * time.Minute,
+	})
+	owner := service.Actor{UserID: intPtr(7)}
+
+	uploaded, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "private.txt",
+		ContentType: "text/plain",
+		Size:        7,
+		Reader:      strings.NewReader("private"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       owner,
+	})
+	if err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+	if _, err := svc.CreateFileAccessToken(ctx, uploaded.File.ID, service.FileAccessTokenInput{
+		TTL:   time.Hour,
+		Actor: owner,
+	}); err == nil {
+		t.Fatal("CreateFileAccessToken() accepted ttl above max")
+	}
+	token, err := svc.CreateFileAccessToken(ctx, uploaded.File.ID, service.FileAccessTokenInput{
+		TTL:   30 * time.Minute,
+		Actor: owner,
+	})
+	if err != nil {
+		t.Fatalf("CreateFileAccessToken() at max error = %v", err)
+	}
+	if token.DownloadToken == "" {
+		t.Fatalf("token is empty: %+v", token)
+	}
+	defaultToken, err := svc.CreateFileAccessToken(ctx, uploaded.File.ID, service.FileAccessTokenInput{Actor: owner})
+	if err != nil {
+		t.Fatalf("CreateFileAccessToken() default ttl error = %v", err)
+	}
+	if defaultToken.ExpiresAt != "2026-06-07 12:30:00" {
+		t.Fatalf("default token expires_at = %q, want capped max ttl", defaultToken.ExpiresAt)
+	}
+}
+
 func TestServiceScopesShareListAndDisableToActor(t *testing.T) {
 	ctx := context.Background()
 	repository := repo.NewMemoryRepository(repo.SeedData())
@@ -378,7 +428,7 @@ func TestServiceCreatesAndCompletesPresignedUpload(t *testing.T) {
 	ctx := context.Background()
 	repository := repo.NewMemoryRepository(repo.SeedData())
 	registry := storage.NewRegistry()
-	backend := fakePresignBackend{}
+	backend := &fakePresignBackend{headInfo: storage.ObjectInfo{Size: 6, ContentType: "text/plain"}}
 	registry.Add(model.DefaultStorageCode, backend)
 	svc := service.New(repository, registry, service.Options{
 		TokenSecret:            []byte("test-secret"),
@@ -417,13 +467,47 @@ func TestServiceCreatesAndCompletesPresignedUpload(t *testing.T) {
 	if completed.Status != model.StatusActive {
 		t.Fatalf("completed status = %q, want active", completed.Status)
 	}
+	if backend.headKey == "" {
+		t.Fatal("CompletePresignedUpload() did not validate storage metadata")
+	}
+}
+
+func TestServiceRejectsPresignedUploadCompletionWhenStorageMetadataDiffers(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	backend := &fakePresignBackend{headInfo: storage.ObjectInfo{Size: 5, ContentType: "text/plain"}}
+	registry.Add(model.DefaultStorageCode, backend)
+	svc := service.New(repository, registry, service.Options{TokenSecret: []byte("test-secret")})
+	actor := service.Actor{UserID: intPtr(7)}
+
+	result, err := svc.CreatePresignedUpload(ctx, service.PresignUploadInput{
+		Filename:    "direct.txt",
+		ContentType: "text/plain",
+		Size:        6,
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       actor,
+	})
+	if err != nil {
+		t.Fatalf("CreatePresignedUpload() error = %v", err)
+	}
+	if _, err := svc.CompletePresignedUpload(ctx, result.File.ID, actor); err == nil {
+		t.Fatal("CompletePresignedUpload() accepted mismatched uploaded size")
+	}
+	object, err := repository.GetObject(ctx, result.File.ID)
+	if err != nil {
+		t.Fatalf("GetObject() error = %v", err)
+	}
+	if object.Status != model.StatusPending {
+		t.Fatalf("object status = %q, want pending after failed completion", object.Status)
+	}
 }
 
 func TestServiceRejectsForeignPresignedUploadCompletion(t *testing.T) {
 	ctx := context.Background()
 	repository := repo.NewMemoryRepository(repo.SeedData())
 	registry := storage.NewRegistry()
-	registry.Add(model.DefaultStorageCode, fakePresignBackend{})
+	registry.Add(model.DefaultStorageCode, &fakePresignBackend{})
 	svc := service.New(repository, registry, service.Options{TokenSecret: []byte("test-secret")})
 	owner := service.Actor{UserID: intPtr(7)}
 	other := service.Actor{UserID: intPtr(8)}
@@ -756,6 +840,57 @@ func TestServiceCleanupExpiredTempsDryRunDoesNotMutate(t *testing.T) {
 	}
 }
 
+func TestServiceCleanupDeletesExpiredPendingPresignedUploads(t *testing.T) {
+	ctx := context.Background()
+	current := time.Now()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	backend := &fakePresignBackend{}
+	registry.Add(model.DefaultStorageCode, backend)
+	svc := service.New(repository, registry, service.Options{
+		TokenSecret:            []byte("test-secret"),
+		DirectUploadPresignTTL: time.Minute,
+		Now:                    func() time.Time { return current },
+	})
+
+	result, err := svc.CreatePresignedUpload(ctx, service.PresignUploadInput{
+		Filename:    "pending.txt",
+		ContentType: "text/plain",
+		Size:        7,
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       service.Actor{UserID: intPtr(7)},
+	})
+	if err != nil {
+		t.Fatalf("CreatePresignedUpload() error = %v", err)
+	}
+
+	current = current.Add(2 * time.Minute)
+	cleanup, err := svc.CleanupExpiredTemps(ctx, service.CleanupOptions{PendingTTL: time.Minute})
+	if err != nil {
+		t.Fatalf("CleanupExpiredTemps() error = %v", err)
+	}
+	if cleanup.PendingFiles != 1 || cleanup.DeletedFiles != 1 {
+		t.Fatalf("CleanupExpiredTemps() = %+v, want 1 pending and 1 deleted file", cleanup)
+	}
+	object, err := repository.GetObject(ctx, result.File.ID)
+	if err != nil {
+		t.Fatalf("GetObject() error = %v", err)
+	}
+	if object.Status != model.StatusDeleted {
+		t.Fatalf("object status = %q, want deleted", object.Status)
+	}
+	ref, err := repository.GetRef(ctx, result.Ref.ID)
+	if err != nil {
+		t.Fatalf("GetRef() error = %v", err)
+	}
+	if ref.Status != model.RefStatusDeleted {
+		t.Fatalf("ref status = %q, want deleted", ref.Status)
+	}
+	if len(backend.deletedKeys) != 1 {
+		t.Fatalf("deleted keys = %+v, want one storage delete", backend.deletedKeys)
+	}
+}
+
 func TestServiceValidatesSceneExtensionAndSize(t *testing.T) {
 	ctx := context.Background()
 	repository := repo.NewMemoryRepository(repo.SeedData())
@@ -811,21 +946,37 @@ func quoteJSON(value string) string {
 	return quoted.String()
 }
 
-type fakePresignBackend struct{}
+type fakePresignBackend struct {
+	headInfo    storage.ObjectInfo
+	headErr     error
+	headKey     string
+	deletedKeys []string
+}
 
-func (fakePresignBackend) Put(context.Context, string, io.Reader, storage.PutOptions) (storage.ObjectInfo, error) {
+func (*fakePresignBackend) Put(context.Context, string, io.Reader, storage.PutOptions) (storage.ObjectInfo, error) {
 	return storage.ObjectInfo{}, storage.ErrUnsupported
 }
 
-func (fakePresignBackend) Open(context.Context, string) (io.ReadCloser, storage.ObjectInfo, error) {
+func (*fakePresignBackend) Open(context.Context, string) (io.ReadCloser, storage.ObjectInfo, error) {
 	return nil, storage.ObjectInfo{}, storage.ErrUnsupported
 }
 
-func (fakePresignBackend) Delete(context.Context, string) error {
+func (b *fakePresignBackend) Delete(_ context.Context, key string) error {
+	b.deletedKeys = append(b.deletedKeys, key)
 	return nil
 }
 
-func (fakePresignBackend) PresignPut(_ context.Context, key string, ttl time.Duration, opts storage.PutOptions) (storage.PresignedURL, error) {
+func (b *fakePresignBackend) Head(_ context.Context, key string) (storage.ObjectInfo, error) {
+	b.headKey = key
+	if b.headErr != nil {
+		return storage.ObjectInfo{}, b.headErr
+	}
+	info := b.headInfo
+	info.Key = key
+	return info, nil
+}
+
+func (*fakePresignBackend) PresignPut(_ context.Context, key string, ttl time.Duration, opts storage.PutOptions) (storage.PresignedURL, error) {
 	return storage.PresignedURL{
 		Method:    http.MethodPut,
 		URL:       "https://signed.example.test/" + key,
@@ -834,10 +985,10 @@ func (fakePresignBackend) PresignPut(_ context.Context, key string, ttl time.Dur
 	}, nil
 }
 
-func (fakePresignBackend) PresignGet(context.Context, string, time.Duration) (storage.PresignedURL, error) {
+func (*fakePresignBackend) PresignGet(context.Context, string, time.Duration) (storage.PresignedURL, error) {
 	return storage.PresignedURL{}, storage.ErrUnsupported
 }
 
-func (fakePresignBackend) PublicURL(key string) string {
+func (*fakePresignBackend) PublicURL(key string) string {
 	return "https://cdn.example.test/" + key
 }

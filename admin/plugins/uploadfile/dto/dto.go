@@ -123,6 +123,7 @@ type StorageParam struct {
 
 type CleanupResult struct {
 	ExpiredRefs  int `json:"expired_refs"`
+	PendingFiles int `json:"pending_files"`
 	DeletedFiles int `json:"deleted_files"`
 }
 

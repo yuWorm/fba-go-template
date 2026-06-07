@@ -48,6 +48,13 @@ func TestOSSBackendPutOpenDeleteAndPublicURL(t *testing.T) {
 	if !bytes.Equal(body, []byte("hello")) || opened.Size != 5 || opened.ContentType != "text/plain" {
 		t.Fatalf("Open() body=%q info=%+v", body, opened)
 	}
+	headed, err := backend.Head(context.Background(), "uploads/a file.txt")
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	if headed.Size != 5 || headed.ContentType != "text/plain" || headed.ETag == nil {
+		t.Fatalf("Head() info = %+v", headed)
+	}
 	if url := backend.PublicURL("uploads/a file.txt"); url != "https://cdn.example.test/files/uploads/a%20file.txt" {
 		t.Fatalf("PublicURL() = %q", url)
 	}
@@ -153,6 +160,19 @@ func (c *fakeOSSClient) GetObject(_ context.Context, input *oss.GetObjectRequest
 	}
 	return &oss.GetObjectResult{
 		Body:          io.NopCloser(bytes.NewReader(object.body)),
+		ContentLength: int64(len(object.body)),
+		ContentType:   oss.Ptr(object.contentType),
+		ETag:          oss.Ptr(object.etag),
+		Metadata:      object.metadata,
+	}, nil
+}
+
+func (c *fakeOSSClient) HeadObject(_ context.Context, input *oss.HeadObjectRequest, _ ...func(*oss.Options)) (*oss.HeadObjectResult, error) {
+	object, ok := c.objects[ossString(input.Key)]
+	if !ok {
+		return nil, errFakeOSSNotFound
+	}
+	return &oss.HeadObjectResult{
 		ContentLength: int64(len(object.body)),
 		ContentType:   oss.Ptr(object.contentType),
 		ETag:          oss.Ptr(object.etag),

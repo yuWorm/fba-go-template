@@ -37,6 +37,7 @@ type OSS struct {
 type ossAPI interface {
 	PutObject(context.Context, *alioss.PutObjectRequest, ...func(*alioss.Options)) (*alioss.PutObjectResult, error)
 	GetObject(context.Context, *alioss.GetObjectRequest, ...func(*alioss.Options)) (*alioss.GetObjectResult, error)
+	HeadObject(context.Context, *alioss.HeadObjectRequest, ...func(*alioss.Options)) (*alioss.HeadObjectResult, error)
 	DeleteObject(context.Context, *alioss.DeleteObjectRequest, ...func(*alioss.Options)) (*alioss.DeleteObjectResult, error)
 	Presign(context.Context, any, ...func(*alioss.PresignOptions)) (*alioss.PresignResult, error)
 }
@@ -138,6 +139,29 @@ func (b *OSS) Open(ctx context.Context, key string) (io.ReadCloser, ObjectInfo, 
 		return nil, ObjectInfo{}, err
 	}
 	return output.Body, ObjectInfo{
+		Key:         clean,
+		Size:        output.ContentLength,
+		ContentType: ossString(output.ContentType),
+		ETag:        output.ETag,
+	}, nil
+}
+
+func (b *OSS) Head(ctx context.Context, key string) (ObjectInfo, error) {
+	if b.client == nil {
+		return ObjectInfo{}, fmt.Errorf("oss client is required")
+	}
+	clean, err := cleanS3Key(key)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	output, err := b.client.HeadObject(ctx, &alioss.HeadObjectRequest{
+		Bucket: alioss.Ptr(b.bucket),
+		Key:    alioss.Ptr(clean),
+	})
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	return ObjectInfo{
 		Key:         clean,
 		Size:        output.ContentLength,
 		ContentType: ossString(output.ContentType),

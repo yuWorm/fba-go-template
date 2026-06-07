@@ -87,6 +87,18 @@ func (b *Local) Open(_ context.Context, key string) (io.ReadCloser, ObjectInfo, 
 	return file, ObjectInfo{Key: clean, Size: stat.Size()}, nil
 }
 
+func (b *Local) Head(_ context.Context, key string) (ObjectInfo, error) {
+	target, clean, err := b.resolve(key)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	stat, err := os.Stat(target)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	return ObjectInfo{Key: clean, Size: stat.Size()}, nil
+}
+
 func (b *Local) Delete(_ context.Context, key string) error {
 	target, _, err := b.resolve(key)
 	if err != nil {

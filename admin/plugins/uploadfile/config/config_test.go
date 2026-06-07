@@ -20,6 +20,10 @@ UPLOADFILE_DEFAULT_MAX_SIZE=12345
 UPLOADFILE_DEFAULT_TEMP_TTL_SECONDS=600
 UPLOADFILE_DEFAULT_ALLOWED_EXTS=txt,pdf
 UPLOADFILE_DEFAULT_ALLOWED_MIMES=["text/plain","application/pdf"]
+UPLOADFILE_DOWNLOAD_TOKEN_TTL_SECONDS=120
+UPLOADFILE_FILE_ACCESS_TOKEN_MAX_TTL_SECONDS=3600
+UPLOADFILE_DIRECT_UPLOAD_PRESIGN_TTL_SECONDS=300
+UPLOADFILE_PENDING_UPLOAD_TTL_SECONDS=900
 `)
 
 	opts, err := uploadconfig.Load(uploadconfig.LoadOptions{EnvFile: envFile})
@@ -44,6 +48,9 @@ UPLOADFILE_DEFAULT_ALLOWED_MIMES=["text/plain","application/pdf"]
 	}
 	if ptrValue(scene.AllowedExts) != `["txt","pdf"]` || ptrValue(scene.AllowedMimes) != `["text/plain","application/pdf"]` {
 		t.Fatalf("default scene allow lists = %v / %v", scene.AllowedExts, scene.AllowedMimes)
+	}
+	if opts.DownloadTokenTTLSeconds != 120 || opts.FileAccessTokenMaxTTLSeconds != 3600 || opts.DirectUploadPresignTTLSeconds != 300 || opts.PendingUploadTTLSeconds != 900 {
+		t.Fatalf("service ttl options = %+v, want configured lifecycle seconds", opts)
 	}
 }
 

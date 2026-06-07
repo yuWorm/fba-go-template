@@ -259,6 +259,22 @@ func (r *MemoryRepository) ListObjects(_ context.Context, filter ObjectFilter, p
 	return paginate(items, page, size)
 }
 
+func (r *MemoryRepository) ListPendingObjectsBefore(_ context.Context, before time.Time) ([]model.FileObject, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	items := make([]model.FileObject, 0)
+	for _, item := range r.objects {
+		if item.Status != model.StatusPending {
+			continue
+		}
+		if item.CreatedTime.After(before) {
+			continue
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
 func (r *MemoryRepository) objectHasMatchingRef(fileID int, filter ObjectFilter) bool {
 	for _, ref := range r.refs {
 		if ref.FileID != fileID {

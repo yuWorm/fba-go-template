@@ -3,6 +3,7 @@ package uploadfile
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/hibiken/asynq"
 	admindto "github.com/yuWorm/fba-go-template/admin/internal/app/admin/dto"
@@ -88,9 +89,8 @@ func (Module) Register(ctx plugin.Context) error {
 	}
 
 	registry := storage.NewRegistry()
-	svc := service.New(repository, registry, service.Options{
-		TokenSecret: []byte(ctx.Config().Auth.JWTSecret),
-	})
+	svc := service.New(repository, registry, serviceOptionsFromConfig(configOptions, []byte(ctx.Config().Auth.JWTSecret)))
+	cleanupOptions := cleanupOptionsFromConfig(configOptions)
 	if err := ctx.Provide(func() adminservice.FileUploadBackend {
 		return adminUploadBackend{svc: svc}
 	}); err != nil {
@@ -110,7 +110,7 @@ func (Module) Register(ctx plugin.Context) error {
 			Name:  cleanupTaskName,
 			Queue: cleanupTaskQueue,
 			Handler: asynq.HandlerFunc(func(taskCtx context.Context, _ *asynq.Task) error {
-				_, err := svc.CleanupExpiredTemps(taskCtx, service.CleanupOptions{})
+				_, err := svc.CleanupExpiredTemps(taskCtx, cleanupOptions)
 				return err
 			}),
 		}); err != nil {
@@ -128,11 +128,13 @@ func (Module) Register(ctx plugin.Context) error {
 					dryRun = true
 				}
 			}
-			result, err := svc.CleanupExpiredTemps(ctx, service.CleanupOptions{DryRun: dryRun})
+			options := cleanupOptions
+			options.DryRun = dryRun
+			result, err := svc.CleanupExpiredTemps(ctx, options)
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(runtime.Output(), "expired_refs=%d deleted_files=%d dry_run=%t\n", result.ExpiredRefs, result.DeletedFiles, dryRun)
+			_, err = fmt.Fprintf(runtime.Output(), "expired_refs=%d pending_files=%d deleted_files=%d dry_run=%t\n", result.ExpiredRefs, result.PendingFiles, result.DeletedFiles, dryRun)
 			return err
 		},
 	}); err != nil {
@@ -140,4 +142,26 @@ func (Module) Register(ctx plugin.Context) error {
 	}
 	handler := uploadapi.NewHandler(svc)
 	return plugin.RegisterRoutes(ctx, uploadapi.Routes(handler))
+}
+
+func serviceOptionsFromConfig(configOptions uploadconfig.Options, tokenSecret []byte) service.Options {
+	options := service.Options{TokenSecret: tokenSecret}
+	if configOptions.DownloadTokenTTLSeconds > 0 {
+		options.DownloadTokenTTL = time.Duration(configOptions.DownloadTokenTTLSeconds) * time.Second
+	}
+	if configOptions.FileAccessTokenMaxTTLSeconds > 0 {
+		options.FileAccessTokenMaxTTL = time.Duration(configOptions.FileAccessTokenMaxTTLSeconds) * time.Second
+	}
+	if configOptions.DirectUploadPresignTTLSeconds > 0 {
+		options.DirectUploadPresignTTL = time.Duration(configOptions.DirectUploadPresignTTLSeconds) * time.Second
+	}
+	return options
+}
+
+func cleanupOptionsFromConfig(configOptions uploadconfig.Options) service.CleanupOptions {
+	options := service.CleanupOptions{}
+	if configOptions.PendingUploadTTLSeconds > 0 {
+		options.PendingTTL = time.Duration(configOptions.PendingUploadTTLSeconds) * time.Second
+	}
+	return options
 }
