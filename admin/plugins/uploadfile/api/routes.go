@@ -7,6 +7,8 @@ func Routes(h Handler) []plugin.Route {
 		plugin.POST("/sys/upload/files", "Upload file", h.UploadFile, plugin.Auth(), plugin.Perm("sys:upload:file:add"), plugin.Tags("uploadfile")),
 		plugin.POST("/sys/upload/files/presign", "Create presigned upload", h.CreatePresignedUpload, plugin.Auth(), plugin.Perm("sys:upload:file:add"), plugin.Tags("uploadfile")),
 		plugin.POST("/sys/upload/files/:pk/complete", "Complete presigned upload", h.CompletePresignedUpload, plugin.Auth(), plugin.Perm("sys:upload:file:add"), plugin.Tags("uploadfile")),
+		plugin.GET("/sys/upload/files/:pk/download", "Download upload file", h.DownloadFile, plugin.Auth(), plugin.Tags("uploadfile")),
+		plugin.POST("/sys/upload/files/:pk/access-token", "Create upload file access token", h.CreateFileAccessToken, plugin.Auth(), plugin.Tags("uploadfile")),
 		plugin.GET("/sys/upload/files/:pk", "Get upload file", h.GetFile, plugin.Auth(), plugin.Tags("uploadfile")),
 		plugin.GET("/sys/upload/files", "List upload files", h.ListFiles, plugin.Auth(), plugin.Tags("uploadfile")),
 		plugin.DELETE("/sys/upload/files", "Delete upload files", h.DeleteFiles, plugin.Auth(), plugin.Perm("sys:upload:file:del"), plugin.Tags("uploadfile")),

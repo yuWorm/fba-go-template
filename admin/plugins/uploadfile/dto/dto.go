@@ -26,6 +26,12 @@ type PresignedUploadURL struct {
 	Headers   map[string]string `json:"headers"`
 }
 
+type FileAccessToken struct {
+	DownloadURL   string `json:"download_url"`
+	DownloadToken string `json:"download_token"`
+	ExpiresAt     string `json:"expires_at"`
+}
+
 type FileDetail struct {
 	ID           int     `json:"id"`
 	UUID         string  `json:"uuid"`
@@ -171,6 +177,10 @@ type PresignUploadParam struct {
 	OwnerID     *string `json:"owner_id"`
 	Temp        *bool   `json:"temp"`
 	TTLSeconds  int     `json:"ttl_seconds"`
+}
+
+type FileAccessTokenParam struct {
+	TTLSeconds int `json:"ttl_seconds"`
 }
 
 func FileDetailFromModel(item model.FileObject, url string) FileDetail {

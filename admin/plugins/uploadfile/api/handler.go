@@ -107,6 +107,44 @@ func (h Handler) CompletePresignedUpload(c fiber.Ctx) error {
 	return c.JSON(response.Success(item))
 }
 
+func (h Handler) DownloadFile(c fiber.Ctx) error {
+	id, err := parseID(c.Params("pk"))
+	if err != nil {
+		return err
+	}
+	reader, file, err := h.service.OpenFile(c.RequestCtx(), id, actor(c))
+	if err != nil {
+		return err
+	}
+	setDownloadHeaders(c, file)
+	return c.SendStream(reader)
+}
+
+func (h Handler) CreateFileAccessToken(c fiber.Ctx) error {
+	id, err := parseID(c.Params("pk"))
+	if err != nil {
+		return err
+	}
+	var param dto.FileAccessTokenParam
+	if c.HasBody() {
+		if err := c.Bind().Body(&param); err != nil {
+			return err
+		}
+	}
+	var ttl time.Duration
+	if param.TTLSeconds > 0 {
+		ttl = time.Duration(param.TTLSeconds) * time.Second
+	}
+	token, err := h.service.CreateFileAccessToken(c.RequestCtx(), id, service.FileAccessTokenInput{
+		TTL:   ttl,
+		Actor: actor(c),
+	})
+	if err != nil {
+		return err
+	}
+	return c.JSON(response.Success(token))
+}
+
 func (h Handler) ListFiles(c fiber.Ctx) error {
 	page, size := pageParams(c)
 	data, err := h.service.ListFiles(c.RequestCtx(), repo.ObjectFilter{
@@ -341,7 +379,7 @@ func (h Handler) DownloadShare(c fiber.Ctx) error {
 }
 
 func (h Handler) OpenPublicFile(c fiber.Ctx) error {
-	reader, file, err := h.service.OpenPublicFile(c.RequestCtx(), c.Params("uuid"))
+	reader, file, err := h.service.OpenPublicFile(c.RequestCtx(), c.Params("uuid"), c.Query("download_token"))
 	if err != nil {
 		return err
 	}

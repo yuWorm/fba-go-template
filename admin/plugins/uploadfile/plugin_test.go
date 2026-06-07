@@ -43,6 +43,8 @@ func TestUploadfilePluginRegistersRoutes(t *testing.T) {
 		"POST /sys/upload/files/presign":            {authRequired: true, permission: "sys:upload:file:add"},
 		"POST /sys/upload/files/:pk/complete":       {authRequired: true, permission: "sys:upload:file:add"},
 		"GET /sys/upload/files/:pk":                 {authRequired: true},
+		"GET /sys/upload/files/:pk/download":        {authRequired: true},
+		"POST /sys/upload/files/:pk/access-token":   {authRequired: true},
 		"GET /sys/upload/files":                     {authRequired: true},
 		"DELETE /sys/upload/files":                  {authRequired: true, permission: "sys:upload:file:del"},
 		"POST /sys/upload/refs/bind":                {authRequired: true, permission: "sys:upload:ref:bind"},

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -89,6 +90,11 @@ type ShareInput struct {
 
 type CleanupOptions struct {
 	DryRun bool
+}
+
+type FileAccessTokenInput struct {
+	TTL   time.Duration
+	Actor Actor
 }
 
 func New(repository repo.Repository, registry *storage.Registry, opts Options) *Service {
@@ -425,6 +431,47 @@ func (s *Service) GetFile(ctx context.Context, id int, actor Actor) (dto.FileDet
 	return dto.FileDetailFromModel(object, s.fileURL(object)), nil
 }
 
+func (s *Service) OpenFile(ctx context.Context, id int, actor Actor) (io.ReadCloser, dto.FileDetail, error) {
+	object, _, err := s.ensureObjectAccess(ctx, id, actor)
+	if err != nil {
+		return nil, dto.FileDetail{}, err
+	}
+	if object.Status == model.StatusDeleted {
+		return nil, dto.FileDetail{}, badRequest("file is deleted", nil)
+	}
+	backend, err := s.backendForObject(ctx, object)
+	if err != nil {
+		return nil, dto.FileDetail{}, err
+	}
+	reader, _, err := backend.Open(ctx, object.ObjectKey)
+	if err != nil {
+		return nil, dto.FileDetail{}, err
+	}
+	return reader, dto.FileDetailFromModel(object, s.fileURL(object)), nil
+}
+
+func (s *Service) CreateFileAccessToken(ctx context.Context, id int, input FileAccessTokenInput) (dto.FileAccessToken, error) {
+	object, _, err := s.ensureObjectAccess(ctx, id, input.Actor)
+	if err != nil {
+		return dto.FileAccessToken{}, err
+	}
+	if object.Status == model.StatusDeleted {
+		return dto.FileAccessToken{}, badRequest("file is deleted", nil)
+	}
+	ttl := input.TTL
+	if ttl <= 0 {
+		ttl = s.tokenTTL
+	}
+	expiresAt := s.now().Add(ttl)
+	token := signFileAccessToken(s.secret, object.UUID, expiresAt)
+	downloadURL := s.fileURL(object) + "?download_token=" + url.QueryEscape(token)
+	return dto.FileAccessToken{
+		DownloadURL:   downloadURL,
+		DownloadToken: token,
+		ExpiresAt:     expiresAt.Format(dto.TimeLayout),
+	}, nil
+}
+
 func (s *Service) ListScenes(ctx context.Context) ([]dto.SceneDetail, error) {
 	items, err := s.repo.ListScenes(ctx)
 	if err != nil {
@@ -641,17 +688,20 @@ func (s *Service) countRemainingLiveRefsAfterCleanup(ctx context.Context, fileID
 	return remaining, nil
 }
 
-func (s *Service) OpenPublicFile(ctx context.Context, uuid string) (io.ReadCloser, dto.FileDetail, error) {
+func (s *Service) OpenPublicFile(ctx context.Context, uuid string, downloadToken string) (io.ReadCloser, dto.FileDetail, error) {
 	object, err := s.repo.GetObjectByUUID(ctx, strings.TrimSpace(uuid))
 	if err != nil {
 		return nil, dto.FileDetail{}, notFound("file not found", err)
 	}
-	if object.Visibility != model.VisibilityPublic {
+	if object.Status == model.StatusDeleted {
+		return nil, dto.FileDetail{}, badRequest("file is deleted", nil)
+	}
+	if object.Visibility != model.VisibilityPublic && !verifyFileAccessToken(s.secret, downloadToken, object.UUID, s.now()) {
 		return nil, dto.FileDetail{}, forbidden("file is not public")
 	}
-	backend, ok := s.storage.Get(object.StorageCode)
-	if !ok {
-		return nil, dto.FileDetail{}, notFound("storage backend not found", nil)
+	backend, err := s.backendForObject(ctx, object)
+	if err != nil {
+		return nil, dto.FileDetail{}, err
 	}
 	reader, _, err := backend.Open(ctx, object.ObjectKey)
 	if err != nil {

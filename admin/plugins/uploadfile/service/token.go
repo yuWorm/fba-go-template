@@ -69,3 +69,35 @@ func verifyDownloadToken(secret []byte, encoded string, shareToken string, passw
 	want := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(want), []byte(sig))
 }
+
+func signFileAccessToken(secret []byte, uuid string, expiresAt time.Time) string {
+	payload := "file|" + uuid + "|" + strconv.FormatInt(expiresAt.Unix(), 10)
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte(payload))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sig
+}
+
+func verifyFileAccessToken(secret []byte, encoded string, uuid string, now time.Time) bool {
+	payloadEncoded, sig, ok := strings.Cut(encoded, ".")
+	if !ok || payloadEncoded == "" || sig == "" {
+		return false
+	}
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(payloadEncoded)
+	if err != nil {
+		return false
+	}
+	payload := string(payloadBytes)
+	parts := strings.Split(payload, "|")
+	if len(parts) != 3 || parts[0] != "file" || parts[1] != uuid {
+		return false
+	}
+	exp, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil || now.After(time.Unix(exp, 0)) {
+		return false
+	}
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte(payload))
+	want := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(want), []byte(sig))
+}

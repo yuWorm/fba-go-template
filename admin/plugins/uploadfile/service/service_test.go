@@ -242,6 +242,102 @@ func TestServiceRejectsNormalUserAccessToForeignOwnedFile(t *testing.T) {
 	}
 }
 
+func TestServiceOpensPrivateFileForOwnerOnly(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := service.New(repository, registry, service.Options{TokenSecret: []byte("test-secret")})
+	owner := service.Actor{UserID: intPtr(7)}
+	other := service.Actor{UserID: intPtr(8)}
+
+	uploaded, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "private.txt",
+		ContentType: "text/plain",
+		Size:        7,
+		Reader:      strings.NewReader("private"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       owner,
+	})
+	if err != nil {
+		t.Fatalf("Upload(owner) error = %v", err)
+	}
+
+	reader, detail, err := svc.OpenFile(ctx, uploaded.File.ID, owner)
+	if err != nil {
+		t.Fatalf("OpenFile(owner) error = %v", err)
+	}
+	defer reader.Close()
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if string(body) != "private" || detail.ID != uploaded.File.ID {
+		t.Fatalf("OpenFile body/detail = %q/%+v", body, detail)
+	}
+	if _, _, err := svc.OpenFile(ctx, uploaded.File.ID, other); err == nil {
+		t.Fatal("OpenFile(other) succeeded")
+	}
+}
+
+func TestServiceCreatesTemporaryAccessTokenForPrivateFile(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := service.New(repository, registry, service.Options{
+		TokenSecret: []byte("test-secret"),
+		Now: func() time.Time {
+			return now
+		},
+	})
+	owner := service.Actor{UserID: intPtr(7)}
+
+	uploaded, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "temporary.txt",
+		ContentType: "text/plain",
+		Size:        9,
+		Reader:      strings.NewReader("temporary"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       owner,
+	})
+	if err != nil {
+		t.Fatalf("Upload(owner) error = %v", err)
+	}
+	if _, _, err := svc.OpenPublicFile(ctx, uploaded.File.UUID, ""); err == nil {
+		t.Fatal("OpenPublicFile(private without token) succeeded")
+	}
+
+	token, err := svc.CreateFileAccessToken(ctx, uploaded.File.ID, service.FileAccessTokenInput{
+		TTL:   5 * time.Minute,
+		Actor: owner,
+	})
+	if err != nil {
+		t.Fatalf("CreateFileAccessToken() error = %v", err)
+	}
+	if token.DownloadToken == "" || !strings.Contains(token.DownloadURL, "download_token=") || token.ExpiresAt != "2026-06-07 12:05:00" {
+		t.Fatalf("access token = %+v", token)
+	}
+	reader, detail, err := svc.OpenPublicFile(ctx, uploaded.File.UUID, token.DownloadToken)
+	if err != nil {
+		t.Fatalf("OpenPublicFile(private with token) error = %v", err)
+	}
+	defer reader.Close()
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if string(body) != "temporary" || detail.ID != uploaded.File.ID {
+		t.Fatalf("temporary access body/detail = %q/%+v", body, detail)
+	}
+
+	now = now.Add(6 * time.Minute)
+	if _, _, err := svc.OpenPublicFile(ctx, uploaded.File.UUID, token.DownloadToken); err == nil {
+		t.Fatal("OpenPublicFile(private expired token) succeeded")
+	}
+}
+
 func TestServiceScopesShareListAndDisableToActor(t *testing.T) {
 	ctx := context.Background()
 	repository := repo.NewMemoryRepository(repo.SeedData())

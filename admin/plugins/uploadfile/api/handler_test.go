@@ -57,6 +57,44 @@ func TestUploadAPIUploadsBindsListsSharesAndDownloads(t *testing.T) {
 	if info, err := os.Stat(filepath.Join(root, "uploads")); err != nil || !info.IsDir() {
 		t.Fatalf("uploaded file prefix not found under local root: info=%v err=%v", info, err)
 	}
+	publicURL, ok := file["url"].(string)
+	if !ok || publicURL == "" {
+		t.Fatalf("file url = %v, want non-empty", file["url"])
+	}
+
+	resp, raw := requestRaw(t, app, http.MethodGet, "/api/v1/sys/upload/files/"+itoa(fileID)+"/download", "", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("private download status = %d body=%s", resp.StatusCode, string(raw))
+	}
+	if string(raw) != "invoice body" {
+		t.Fatalf("private download body = %q, want invoice body", string(raw))
+	}
+
+	resp, raw = requestRaw(t, app, http.MethodGet, publicURL, "", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusForbidden {
+		t.Fatalf("private public-url status = %d body=%s, want 403", resp.StatusCode, string(raw))
+	}
+
+	resp, body = requestJSON(t, app, http.MethodPost, "/api/v1/sys/upload/files/"+itoa(fileID)+"/access-token", `{"ttl_seconds":300}`)
+	assertStatusOK(t, resp)
+	access := envelopeMap(t, body)
+	downloadURL, ok := access["download_url"].(string)
+	if !ok || downloadURL == "" {
+		t.Fatalf("download_url = %v, want non-empty", access["download_url"])
+	}
+	if token, ok := access["download_token"].(string); !ok || token == "" {
+		t.Fatalf("download_token = %v, want non-empty", access["download_token"])
+	}
+	resp, raw = requestRaw(t, app, http.MethodGet, downloadURL, "", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("temporary download status = %d body=%s", resp.StatusCode, string(raw))
+	}
+	if string(raw) != "invoice body" {
+		t.Fatalf("temporary download body = %q, want invoice body", string(raw))
+	}
 
 	resp, body = requestJSON(t, app, http.MethodGet, "/api/v1/sys/upload/refs?scene_code=default&subject_type=order&subject_id=SO-1&field=invoice&owner_type=user&owner_id=42", "")
 	assertStatusOK(t, resp)
@@ -91,7 +129,7 @@ func TestUploadAPIUploadsBindsListsSharesAndDownloads(t *testing.T) {
 		t.Fatalf("download_token = %v, want non-empty", verify["download_token"])
 	}
 
-	resp, raw := requestRaw(t, app, http.MethodGet, "/api/v1/public/upload/shares/"+token+"/download?download_token="+downloadToken, "", "")
+	resp, raw = requestRaw(t, app, http.MethodGet, "/api/v1/public/upload/shares/"+token+"/download?download_token="+downloadToken, "", "")
 	defer resp.Body.Close()
 	if resp.StatusCode != fiber.StatusOK {
 		t.Fatalf("download status = %d body=%s", resp.StatusCode, string(raw))
