@@ -7,6 +7,8 @@ Status: Approved for implementation
 
 Build a reusable `uploadfile` plugin for the FBA Go admin template. The plugin provides unified file upload, sharing, querying, and management across local and object-storage backends.
 
+The current HTTP and cleanup command contract is tracked in `docs/superpowers/specs/2026-06-08-uploadfile-api-contract.md`.
+
 The first implementation should solve the core admin/backend workflow:
 
 - Upload files through the application server.
@@ -363,6 +365,24 @@ Returns object, refs, and share summary.
 
 Soft deletes objects and refs. Physical delete should happen only when no active refs remain and the caller requested physical deletion or a cleanup task handles it.
 
+`GET /sys/upload/files/:pk/download`
+
+Streams a private file for an authenticated caller in the file owner scope.
+
+`POST /sys/upload/files/:pk/access-token`
+
+Creates a short-lived HMAC download token for accessing private files through the public file URL. Explicit `ttl_seconds` values above the configured max are rejected.
+
+### Direct Upload
+
+`POST /sys/upload/files/presign`
+
+Creates a pending file object/ref and returns a backend presigned PUT URL. Clients must upload bytes to the returned URL with the returned headers.
+
+`POST /sys/upload/files/:pk/complete`
+
+Completes a pending direct upload. The service validates storage metadata with backend `Head` before activation and rejects missing objects, size mismatches, and MIME mismatches.
+
 ### Share
 
 `POST /upload/shares`
@@ -393,8 +413,10 @@ Temporary cleanup should be implemented as a service method and later exposed as
 2. Mark refs deleted.
 3. For each affected file, check active refs.
 4. If no active refs remain, mark object deleted and delete physical object if configured.
+5. Find stale `upload_file_object.status=pending` records older than the pending-upload TTL.
+6. Mark their refs deleted, delete physical objects when present, and mark objects deleted.
 
-First version can expose the cleanup service and unit tests without scheduler integration. Task integration can follow after core upload/share behavior is stable.
+Cleanup is exposed through the `uploadfile.cleanup` task and the `uploadfile cleanup [--dry-run]` command. Command output includes `expired_refs`, `pending_files`, `deleted_files`, and `dry_run`.
 
 ## Permissions
 
