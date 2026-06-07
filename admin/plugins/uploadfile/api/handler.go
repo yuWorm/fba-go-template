@@ -77,7 +77,7 @@ func (h Handler) ListFiles(c fiber.Ctx) error {
 		UploadedBy:  intPtrQuery(c, "uploaded_by"),
 		OwnerType:   c.Query("owner_type"),
 		OwnerID:     c.Query("owner_id"),
-	}, page, size)
+	}, page, size, actor(c))
 	if err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ func (h Handler) GetFile(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	item, err := h.service.GetFile(c.RequestCtx(), id)
+	item, err := h.service.GetFile(c.RequestCtx(), id, actor(c))
 	if err != nil {
 		return err
 	}
@@ -101,7 +101,7 @@ func (h Handler) DeleteFiles(c fiber.Ctx) error {
 	if err := c.Bind().Body(&param); err != nil {
 		return err
 	}
-	if err := h.service.DeleteFiles(c.RequestCtx(), param.PKs); err != nil {
+	if err := h.service.DeleteFiles(c.RequestCtx(), param.PKs, actor(c)); err != nil {
 		return err
 	}
 	return c.JSON(response.Success[any](nil))
@@ -138,7 +138,7 @@ func (h Handler) ListRefs(c fiber.Ctx) error {
 		Status:      c.Query("status"),
 		OwnerType:   c.Query("owner_type"),
 		OwnerID:     c.Query("owner_id"),
-	}, page, size)
+	}, page, size, actor(c))
 	if err != nil {
 		return err
 	}
@@ -252,7 +252,7 @@ func (h Handler) ListShares(c fiber.Ctx) error {
 		FileID:    intPtrQuery(c, "file_id"),
 		Status:    c.Query("status"),
 		CreatedBy: intPtrQuery(c, "created_by"),
-	}, page, size)
+	}, page, size, actor(c))
 	if err != nil {
 		return err
 	}
@@ -264,7 +264,7 @@ func (h Handler) DisableShare(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	if err := h.service.DisableShare(c.RequestCtx(), id); err != nil {
+	if err := h.service.DisableShare(c.RequestCtx(), id, actor(c)); err != nil {
 		return err
 	}
 	return c.JSON(response.Success[any](nil))
@@ -372,16 +372,13 @@ func parseOptionalTime(raw *string) (*time.Time, error) {
 }
 
 func actor(c fiber.Ctx) service.Actor {
-	id := currentUserID(c)
-	return service.Actor{UserID: &id}
-}
-
-func currentUserID(c fiber.Ctx) int {
 	user, ok := c.Locals(plugin.CurrentUserLocalKey).(*rbac.CurrentUser)
 	if !ok || user == nil || user.ID <= 0 {
-		return defaultCurrentUserID
+		id := defaultCurrentUserID
+		return service.Actor{UserID: &id}
 	}
-	return int(user.ID)
+	id := int(user.ID)
+	return service.Actor{UserID: &id, IsSuperAdmin: user.IsSuperAdmin}
 }
 
 func setDownloadHeaders(c fiber.Ctx, file dto.FileDetail) {

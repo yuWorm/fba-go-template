@@ -133,7 +133,7 @@ func TestServiceUploadsBindsSharesAndDownloadsLocalFiles(t *testing.T) {
 		SubjectID:   "1001",
 		Field:       "attachments",
 		Status:      model.RefStatusActive,
-	}, 1, 20)
+	}, 1, 20, actor)
 	if err != nil {
 		t.Fatalf("ListRefs() error = %v", err)
 	}
@@ -177,6 +177,61 @@ func TestServiceUploadsBindsSharesAndDownloadsLocalFiles(t *testing.T) {
 	}
 	if reloaded.DownloadCount != 1 {
 		t.Fatalf("DownloadCount = %d, want 1", reloaded.DownloadCount)
+	}
+}
+
+func TestServiceDefaultsUploadOwnerToCurrentUser(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := service.New(repository, registry, service.Options{TokenSecret: []byte("test-secret")})
+
+	uploaded, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "owned.txt",
+		ContentType: "text/plain",
+		Size:        5,
+		Reader:      strings.NewReader("owned"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       service.Actor{UserID: intPtr(7)},
+	})
+	if err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+	ref, err := repository.GetRef(ctx, uploaded.Ref.ID)
+	if err != nil {
+		t.Fatalf("GetRef() error = %v", err)
+	}
+	if ptrValue(ref.OwnerType) != "user" || ptrValue(ref.OwnerID) != "7" {
+		t.Fatalf("ref owner = %v/%v, want user/7", ref.OwnerType, ref.OwnerID)
+	}
+}
+
+func TestServiceRejectsNormalUserAccessToForeignOwnedFile(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := service.New(repository, registry, service.Options{TokenSecret: []byte("test-secret")})
+	owner := service.Actor{UserID: intPtr(7)}
+	other := service.Actor{UserID: intPtr(8)}
+
+	uploaded, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "private.txt",
+		ContentType: "text/plain",
+		Size:        7,
+		Reader:      strings.NewReader("private"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       owner,
+	})
+	if err != nil {
+		t.Fatalf("Upload(owner) error = %v", err)
+	}
+	if err := svc.DeleteFiles(ctx, []int{uploaded.File.ID}, other); err == nil {
+		t.Fatal("DeleteFiles() by foreign owner succeeded")
+	}
+	if _, err := svc.CreateShare(ctx, service.ShareInput{FileID: uploaded.File.ID, Actor: other}); err == nil {
+		t.Fatal("CreateShare() by foreign owner succeeded")
 	}
 }
 
@@ -409,6 +464,13 @@ func intPtr(value int) *int {
 
 func boolPtr(value bool) *bool {
 	return &value
+}
+
+func ptrValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func quoteJSON(value string) string {

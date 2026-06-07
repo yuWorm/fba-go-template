@@ -135,6 +135,7 @@ type Repository interface {
 	ListObjects(ctx context.Context, filter ObjectFilter, page int, size int) ([]model.FileObject, int64, error)
 	UpdateObjectStatus(ctx context.Context, id int, status string) error
 	CreateRef(ctx context.Context, param CreateRefParam) (model.FileRef, error)
+	GetRef(ctx context.Context, id int) (model.FileRef, error)
 	ListRefs(ctx context.Context, filter RefFilter, page int, size int) ([]model.FileRef, int64, error)
 	ListExpiredTempRefs(ctx context.Context, now time.Time) ([]model.FileRef, error)
 	CountRefsByFileStatus(ctx context.Context, fileID int, statuses []string) (int64, error)

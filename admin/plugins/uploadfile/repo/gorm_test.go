@@ -40,7 +40,7 @@ func TestGORMRepositoryPersistsUploadLifecycleAndOwnerFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateObject() error = %v", err)
 	}
-	if _, err := repository.CreateRef(ctx, repo.CreateRefParam{
+	ref, err := repository.CreateRef(ctx, repo.CreateRefParam{
 		FileID:      object.ID,
 		SceneCode:   model.DefaultSceneCode,
 		SubjectType: strPtrGORM("order"),
@@ -50,8 +50,16 @@ func TestGORMRepositoryPersistsUploadLifecycleAndOwnerFilters(t *testing.T) {
 		OwnerType:   strPtrGORM("user"),
 		OwnerID:     strPtrGORM("7"),
 		CreatedBy:   intPtrGORM(7),
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("CreateRef() error = %v", err)
+	}
+	loadedRef, err := repository.GetRef(ctx, ref.ID)
+	if err != nil {
+		t.Fatalf("GetRef() error = %v", err)
+	}
+	if loadedRef.ID != ref.ID || loadedRef.FileID != object.ID {
+		t.Fatalf("GetRef() = %+v, want ref %d file %d", loadedRef, ref.ID, object.ID)
 	}
 
 	refs, total, err := repository.ListRefs(ctx, repo.RefFilter{

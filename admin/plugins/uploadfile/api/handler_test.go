@@ -224,7 +224,54 @@ func TestUploadAPIUpdatesAndDeletesScene(t *testing.T) {
 	}
 }
 
+func TestUploadAPIScopesFilesAndSharesByOwnerForNormalUsers(t *testing.T) {
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := uploadservice.New(repository, registry, uploadservice.Options{TokenSecret: []byte("api-test-secret")})
+	ownerApp := newUploadAppWithUser(t, svc, uploadUser(7, "owner"))
+	otherApp := newUploadAppWithUser(t, svc, uploadUser(8, "other"))
+	adminApp := newUploadAppWithUser(t, svc, &rbac.CurrentUser{ID: 1, Username: "admin", IsStaff: true, IsSuperAdmin: true})
+
+	resp, body := requestMultipart(t, ownerApp, http.MethodPost, "/api/v1/sys/upload/files", map[string]string{
+		"file": "owned.txt",
+	}, map[string]string{
+		"scene_code": "default",
+	}, []byte("owned"))
+	assertStatusOK(t, resp)
+	file := assertMap(t, envelopeMap(t, body)["file"])
+	fileID := int(file["id"].(float64))
+
+	resp, body = requestJSON(t, ownerApp, http.MethodGet, "/api/v1/sys/upload/files", "")
+	assertStatusOK(t, resp)
+	if items := assertSlice(t, envelopeMap(t, body)["items"]); len(items) != 1 {
+		t.Fatalf("owner list length = %d, want 1; body=%v", len(items), body)
+	}
+
+	resp, body = requestJSON(t, otherApp, http.MethodGet, "/api/v1/sys/upload/files", "")
+	assertStatusOK(t, resp)
+	if items := assertSlice(t, envelopeMap(t, body)["items"]); len(items) != 0 {
+		t.Fatalf("other list length = %d, want 0; body=%v", len(items), body)
+	}
+
+	resp, body = requestJSON(t, otherApp, http.MethodPost, "/api/v1/sys/upload/shares", `{"file_id":`+itoa(fileID)+`}`)
+	if resp.StatusCode != fiber.StatusForbidden {
+		t.Fatalf("foreign share status = %d, want 403; body=%v", resp.StatusCode, body)
+	}
+
+	resp, body = requestJSON(t, adminApp, http.MethodGet, "/api/v1/sys/upload/files", "")
+	assertStatusOK(t, resp)
+	if items := assertSlice(t, envelopeMap(t, body)["items"]); len(items) != 1 {
+		t.Fatalf("admin list length = %d, want 1; body=%v", len(items), body)
+	}
+}
+
 func newUploadApp(t *testing.T, svc *uploadservice.Service) *fiber.App {
+	t.Helper()
+	return newUploadAppWithUser(t, svc, &rbac.CurrentUser{ID: 42, Username: "api-user", IsStaff: true, IsSuperAdmin: true})
+}
+
+func newUploadAppWithUser(t *testing.T, svc *uploadservice.Service, user *rbac.CurrentUser) *fiber.App {
 	t.Helper()
 	app := fiber.New(fiber.Config{ErrorHandler: middleware.ErrorHandler})
 	ctx := plugin.NewContext(plugin.ContextOptions{APIGroup: app.Group("/api/v1")})
@@ -233,9 +280,28 @@ func newUploadApp(t *testing.T, svc *uploadservice.Service) *fiber.App {
 		t.Fatalf("RegisterRoutes() error = %v", err)
 	}
 	plugin.MountRoutes(ctx.APIGroup(), ctx.Routes(), plugin.WithAuthenticator(plugin.AuthenticatorFunc(func(fiber.Ctx) (*rbac.CurrentUser, error) {
-		return &rbac.CurrentUser{ID: 42, Username: "api-user", IsStaff: true, IsSuperAdmin: true}, nil
+		return user, nil
 	})))
 	return app
+}
+
+func uploadUser(id int64, username string) *rbac.CurrentUser {
+	return &rbac.CurrentUser{
+		ID:       id,
+		Username: username,
+		IsStaff:  true,
+		Roles: []rbac.Role{
+			{
+				ID:        id,
+				Enabled:   true,
+				MenuCount: 1,
+				Permissions: []string{
+					"sys:upload:file:add",
+					"sys:upload:share:add",
+				},
+			},
+		},
+	}
 }
 
 func requestMultipart(t *testing.T, app *fiber.App, method string, path string, files map[string]string, fields map[string]string, payload []byte) (*http.Response, map[string]any) {

@@ -320,6 +320,17 @@ func (r *MemoryRepository) CreateRef(_ context.Context, param CreateRefParam) (m
 	return item, nil
 }
 
+func (r *MemoryRepository) GetRef(_ context.Context, id int) (model.FileRef, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, item := range r.refs {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return model.FileRef{}, ErrNotFound
+}
+
 func (r *MemoryRepository) ListRefs(_ context.Context, filter RefFilter, page int, size int) ([]model.FileRef, int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

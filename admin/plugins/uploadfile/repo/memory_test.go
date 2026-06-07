@@ -48,6 +48,13 @@ func TestMemoryRepositoryStoresObjectsRefsAndShares(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRef() error = %v", err)
 	}
+	loadedRef, err := repository.GetRef(ctx, ref.ID)
+	if err != nil {
+		t.Fatalf("GetRef() error = %v", err)
+	}
+	if loadedRef.ID != ref.ID || loadedRef.FileID != object.ID {
+		t.Fatalf("GetRef() = %+v, want ref %d file %d", loadedRef, ref.ID, object.ID)
+	}
 
 	if err := repository.BindRefs(ctx, repo.BindRefsParam{
 		FileIDs:     []int{object.ID},

@@ -35,10 +35,6 @@ type Service struct {
 	tokenTTL time.Duration
 }
 
-type Actor struct {
-	UserID *int
-}
-
 type UploadInput struct {
 	Filename    string
 	ContentType string
@@ -172,6 +168,14 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (dto.UploadResu
 		expire := s.now().Add(time.Duration(scene.TempTTLSeconds) * time.Second)
 		expiresAt = &expire
 	}
+	ownerType := cleanOptional(input.OwnerType)
+	ownerID := cleanOptional(input.OwnerID)
+	if ownerType == nil && ownerID == nil {
+		ownerType, ownerID = input.Actor.defaultOwner()
+	}
+	if !input.Actor.allowsOwner(ownerType, ownerID) {
+		return dto.UploadResult{}, forbidden("file owner is not allowed")
+	}
 	ref, err := s.repo.CreateRef(ctx, repo.CreateRefParam{
 		FileID:      object.ID,
 		SceneCode:   scene.Code,
@@ -180,8 +184,8 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (dto.UploadResu
 		Field:       optionalString(input.Field),
 		Status:      refStatus,
 		ExpiresAt:   expiresAt,
-		OwnerType:   cleanOptional(input.OwnerType),
-		OwnerID:     cleanOptional(input.OwnerID),
+		OwnerType:   ownerType,
+		OwnerID:     ownerID,
 		CreatedBy:   input.Actor.UserID,
 	})
 	if err != nil {
@@ -201,18 +205,32 @@ func (s *Service) Bind(ctx context.Context, input BindInput) error {
 	if strings.TrimSpace(input.SubjectType) == "" || strings.TrimSpace(input.SubjectID) == "" {
 		return badRequest("subject is required", nil)
 	}
+	for _, fileID := range input.FileIDs {
+		if _, _, err := s.ensureObjectAccess(ctx, fileID, input.Actor); err != nil {
+			return err
+		}
+	}
+	ownerType := cleanOptional(input.OwnerType)
+	ownerID := cleanOptional(input.OwnerID)
+	if ownerType == nil && ownerID == nil {
+		ownerType, ownerID = input.Actor.defaultOwner()
+	}
+	if !input.Actor.allowsOwner(ownerType, ownerID) {
+		return forbidden("file owner is not allowed")
+	}
 	return s.repo.BindRefs(ctx, repo.BindRefsParam{
 		FileIDs:     input.FileIDs,
 		SceneCode:   sceneCode,
 		SubjectType: strings.TrimSpace(input.SubjectType),
 		SubjectID:   strings.TrimSpace(input.SubjectID),
 		Field:       strings.TrimSpace(input.Field),
-		OwnerType:   cleanOptional(input.OwnerType),
-		OwnerID:     cleanOptional(input.OwnerID),
+		OwnerType:   ownerType,
+		OwnerID:     ownerID,
 	})
 }
 
-func (s *Service) ListRefs(ctx context.Context, filter repo.RefFilter, page int, size int) (pagination.PageData[dto.RefDetail], error) {
+func (s *Service) ListRefs(ctx context.Context, filter repo.RefFilter, page int, size int, actor Actor) (pagination.PageData[dto.RefDetail], error) {
+	filter = scopeRefFilter(filter, actor)
 	items, total, err := s.repo.ListRefs(ctx, filter, page, size)
 	if err != nil {
 		return pagination.PageData[dto.RefDetail]{}, err
@@ -228,7 +246,8 @@ func (s *Service) ListRefs(ctx context.Context, filter repo.RefFilter, page int,
 	return pagination.NewPageData(result, total, page, size, "/api/v1/upload/refs"), nil
 }
 
-func (s *Service) ListFiles(ctx context.Context, filter repo.ObjectFilter, page int, size int) (pagination.PageData[dto.FileDetail], error) {
+func (s *Service) ListFiles(ctx context.Context, filter repo.ObjectFilter, page int, size int, actor Actor) (pagination.PageData[dto.FileDetail], error) {
+	filter = scopeObjectFilter(filter, actor)
 	items, total, err := s.repo.ListObjects(ctx, filter, page, size)
 	if err != nil {
 		return pagination.PageData[dto.FileDetail]{}, err
@@ -240,10 +259,10 @@ func (s *Service) ListFiles(ctx context.Context, filter repo.ObjectFilter, page 
 	return pagination.NewPageData(result, total, page, size, "/api/v1/upload/files"), nil
 }
 
-func (s *Service) GetFile(ctx context.Context, id int) (dto.FileDetail, error) {
-	object, err := s.repo.GetObject(ctx, id)
+func (s *Service) GetFile(ctx context.Context, id int, actor Actor) (dto.FileDetail, error) {
+	object, _, err := s.ensureObjectAccess(ctx, id, actor)
 	if err != nil {
-		return dto.FileDetail{}, notFound("file not found", err)
+		return dto.FileDetail{}, err
 	}
 	return dto.FileDetailFromModel(object, s.fileURL(object)), nil
 }
@@ -351,11 +370,14 @@ func (s *Service) DeleteStorage(ctx context.Context, code string) error {
 	return s.repo.DeleteStorage(ctx, code)
 }
 
-func (s *Service) DeleteFiles(ctx context.Context, ids []int) error {
+func (s *Service) DeleteFiles(ctx context.Context, ids []int, actor Actor) error {
 	if len(ids) == 0 {
 		return badRequest("pks is required", nil)
 	}
 	for _, id := range ids {
+		if _, _, err := s.ensureObjectAccess(ctx, id, actor); err != nil {
+			return err
+		}
 		if err := s.repo.UpdateObjectStatus(ctx, id, model.StatusDeleted); err != nil {
 			return err
 		}
@@ -434,8 +456,8 @@ func (s *Service) CreateShare(ctx context.Context, input ShareInput) (dto.ShareD
 	if input.FileID <= 0 {
 		return dto.ShareDetail{}, badRequest("file_id is required", nil)
 	}
-	if _, err := s.repo.GetObject(ctx, input.FileID); err != nil {
-		return dto.ShareDetail{}, notFound("file not found", err)
+	if _, _, err := s.ensureObjectAccess(ctx, input.FileID, input.Actor); err != nil {
+		return dto.ShareDetail{}, err
 	}
 	var passwordHash *string
 	if input.Password != nil && strings.TrimSpace(*input.Password) != "" {
@@ -458,7 +480,10 @@ func (s *Service) CreateShare(ctx context.Context, input ShareInput) (dto.ShareD
 	return dto.ShareDetailFromModel(share), nil
 }
 
-func (s *Service) ListShares(ctx context.Context, filter repo.ShareFilter, page int, size int) (pagination.PageData[dto.ShareDetail], error) {
+func (s *Service) ListShares(ctx context.Context, filter repo.ShareFilter, page int, size int, actor Actor) (pagination.PageData[dto.ShareDetail], error) {
+	if !actor.IsSuperAdmin && actor.UserID != nil {
+		filter.CreatedBy = actor.UserID
+	}
 	items, total, err := s.repo.ListShares(ctx, filter, page, size)
 	if err != nil {
 		return pagination.PageData[dto.ShareDetail]{}, err
@@ -470,7 +495,14 @@ func (s *Service) ListShares(ctx context.Context, filter repo.ShareFilter, page 
 	return pagination.NewPageData(result, total, page, size, "/api/v1/upload/shares"), nil
 }
 
-func (s *Service) DisableShare(ctx context.Context, id int) error {
+func (s *Service) DisableShare(ctx context.Context, id int, actor Actor) error {
+	share, err := s.repo.GetShare(ctx, id)
+	if err != nil {
+		return notFound("share not found", err)
+	}
+	if _, _, err := s.ensureObjectAccess(ctx, share.FileID, actor); err != nil {
+		return err
+	}
 	return s.repo.DisableShare(ctx, id)
 }
 
@@ -538,6 +570,46 @@ func (s *Service) validShare(ctx context.Context, token string) (model.Share, er
 		return model.Share{}, forbidden("share download limit reached")
 	}
 	return share, nil
+}
+
+func (s *Service) ensureObjectAccess(ctx context.Context, id int, actor Actor) (model.FileObject, []model.FileRef, error) {
+	object, err := s.repo.GetObject(ctx, id)
+	if err != nil {
+		return model.FileObject{}, nil, notFound("file not found", err)
+	}
+	refs, err := s.refsForFile(ctx, id)
+	if err != nil {
+		return model.FileObject{}, nil, err
+	}
+	if !actor.ownsObject(object, refs) {
+		return model.FileObject{}, nil, forbidden("file owner is not allowed")
+	}
+	return object, refs, nil
+}
+
+func (s *Service) refsForFile(ctx context.Context, fileID int) ([]model.FileRef, error) {
+	refs, _, err := s.repo.ListRefs(ctx, repo.RefFilter{FileID: &fileID}, 1, 1000)
+	return refs, err
+}
+
+func scopeObjectFilter(filter repo.ObjectFilter, actor Actor) repo.ObjectFilter {
+	if actor.IsSuperAdmin {
+		return filter
+	}
+	ownerType, ownerID := actor.defaultOwner()
+	filter.OwnerType = ownerValue(ownerType)
+	filter.OwnerID = ownerValue(ownerID)
+	return filter
+}
+
+func scopeRefFilter(filter repo.RefFilter, actor Actor) repo.RefFilter {
+	if actor.IsSuperAdmin {
+		return filter
+	}
+	ownerType, ownerID := actor.defaultOwner()
+	filter.OwnerType = ownerValue(ownerType)
+	filter.OwnerID = ownerValue(ownerID)
+	return filter
 }
 
 func (s *Service) backend(ctx context.Context, scene model.Scene) (model.Storage, storage.Backend, error) {

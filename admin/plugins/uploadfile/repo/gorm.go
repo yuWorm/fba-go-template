@@ -260,6 +260,12 @@ func (r *GORMRepository) CreateRef(ctx context.Context, param CreateRefParam) (m
 	return item, nil
 }
 
+func (r *GORMRepository) GetRef(ctx context.Context, id int) (model.FileRef, error) {
+	var item model.FileRef
+	err := r.provider.Read().WithContext(ctx).First(&item, id).Error
+	return item, mapGORMError(err)
+}
+
 func (r *GORMRepository) ListRefs(ctx context.Context, filter RefFilter, page int, size int) ([]model.FileRef, int64, error) {
 	query := r.provider.Read().WithContext(ctx).Model(&model.FileRef{})
 	if filter.FileID != nil {
