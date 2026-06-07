@@ -40,6 +40,12 @@ func TestSeedStoragesAndScenesProvideLocalDefaults(t *testing.T) {
 	if got[model.SceneAvatar].MaxSize <= 0 {
 		t.Fatalf("avatar max size = %d, want positive", got[model.SceneAvatar].MaxSize)
 	}
+	for _, code := range []string{model.DefaultSceneCode, model.SceneAttachment} {
+		exts := ptrValue(got[code].AllowedExts)
+		if !strings.Contains(exts, `"avi"`) || !strings.Contains(exts, `"flv"`) {
+			t.Fatalf("scene %q allowed_exts = %s, want legacy video extensions", code, exts)
+		}
+	}
 }
 
 func TestDTOsExposeFileAndRefDetailsWithoutInternalPaths(t *testing.T) {

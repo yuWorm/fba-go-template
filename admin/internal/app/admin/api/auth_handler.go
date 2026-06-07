@@ -33,10 +33,11 @@ type Handler struct {
 }
 
 type HandlerOptions struct {
-	Config         config.Options
-	ConfigProvider service.AdminConfigProvider
-	Redis          service.RedisClient
-	Online         realtime.OnlineStore
+	Config                    config.Options
+	ConfigProvider            service.AdminConfigProvider
+	Redis                     service.RedisClient
+	Online                    realtime.OnlineStore
+	FileUploadBackendResolver service.FileUploadBackendResolver
 }
 
 func NewHandler() Handler {
@@ -73,7 +74,7 @@ func NewHandlerWithAdminOptions(repository repo.Repository, opts HandlerOptions)
 		dataScopes: service.NewDataScopeService(repository),
 		plugins:    service.NewPluginServiceWithConfig(repository, opts.Config),
 		logs:       service.NewLogService(repository),
-		files:      service.NewFileService(),
+		files:      service.NewFileServiceWithResolver(opts.FileUploadBackendResolver),
 		monitors:   service.NewMonitorServiceWithRealtime(repository, opts.Redis, opts.Online),
 	}
 }

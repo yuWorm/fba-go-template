@@ -59,10 +59,11 @@ func (Module) Register(ctx plugin.Context) error {
 	}
 
 	handler := adminapi.NewHandlerWithAdminOptions(repository, adminapi.HandlerOptions{
-		Config:         ctx.Config(),
-		ConfigProvider: deferredAdminConfigProvider{resolver: ctx.Container()},
-		Redis:          redisClient,
-		Online:         onlineStore,
+		Config:                    ctx.Config(),
+		ConfigProvider:            deferredAdminConfigProvider{resolver: ctx.Container()},
+		Redis:                     redisClient,
+		Online:                    onlineStore,
+		FileUploadBackendResolver: ctx.Container(),
 	})
 	if err := ctx.Provide(func() plugin.Authenticator {
 		return handler

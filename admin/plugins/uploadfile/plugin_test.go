@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/hibiken/asynq"
+	adminservice "github.com/yuWorm/fba-go-template/admin/internal/app/admin/service"
 	uploadfile "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile"
 	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/model"
 	uploadrepo "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/repo"
@@ -153,6 +154,34 @@ UPLOADFILE_DEFAULT_TEMP_TTL_SECONDS=600
 	}
 	if scene.MaxSize != 12345 || scene.TempTTLSeconds != 600 {
 		t.Fatalf("scene = %+v, want env configured limits", scene)
+	}
+}
+
+func TestUploadfilePluginRegistersAdminUploadBackend(t *testing.T) {
+	envFile := writeUploadfileEnvFile(t, "UPLOADFILE_LOCAL_ROOT="+t.TempDir()+"\n")
+	t.Setenv("FBA_ENV_FILE", envFile)
+	container := di.New()
+	ctx := plugin.NewContext(plugin.ContextOptions{Container: container})
+	if err := uploadfile.FBAPlugin().Register(ctx); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	var backend adminservice.FileUploadBackend
+	if !container.Resolve(&backend) || backend == nil {
+		t.Fatal("admin FileUploadBackend was not registered")
+	}
+	userID := 7
+	uploaded, err := backend.Upload(context.Background(), adminservice.FileUploadInput{
+		Filename:    "compat.txt",
+		ContentType: "text/plain",
+		Size:        5,
+		Reader:      strings.NewReader("hello"),
+		UserID:      &userID,
+	})
+	if err != nil {
+		t.Fatalf("backend Upload() error = %v", err)
+	}
+	if !strings.HasPrefix(uploaded.URL, "/api/v1/public/upload/files/") {
+		t.Fatalf("uploaded URL = %q, want uploadfile public URL", uploaded.URL)
 	}
 }
 

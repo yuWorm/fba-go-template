@@ -19,6 +19,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	admin "github.com/yuWorm/fba-go-template/admin/internal/app/admin"
 	adminapi "github.com/yuWorm/fba-go-template/admin/internal/app/admin/api"
+	admindto "github.com/yuWorm/fba-go-template/admin/internal/app/admin/dto"
 	adminmodel "github.com/yuWorm/fba-go-template/admin/internal/app/admin/model"
 	adminrepo "github.com/yuWorm/fba-go-template/admin/internal/app/admin/repo"
 	adminservice "github.com/yuWorm/fba-go-template/admin/internal/app/admin/service"
@@ -1584,6 +1585,55 @@ func TestUploadFileUsesMultipartFilenameLikePython(t *testing.T) {
 	assertErrorEnvelope(t, resp, body, fiber.StatusBadRequest, "此文件格式 txt 暂不支持")
 }
 
+func TestUploadFileUsesInjectedBackendWhenAvailable(t *testing.T) {
+	backend := &recordingFileUploadBackend{returnURL: "/uploads/default/audit.png"}
+	app := newAdminAppWithFileUploadBackend(t, backend)
+	token := loginForAccessToken(t, app, "admin", "admin")
+
+	uploadBody := "--fba-upload\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audit.png\"\r\nContent-Type: image/png\r\n\r\nhello\r\n--fba-upload--\r\n"
+	req := httptest.NewRequest("POST", "/api/v1/sys/files/upload", strings.NewReader(uploadBody))
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=fba-upload")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("POST /sys/files/upload error = %v", err)
+	}
+	defer resp.Body.Close()
+	assertStatusOK(t, resp)
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode upload body: %v", err)
+	}
+	data := assertEnvelopeMap(t, body)
+	if data["url"] != backend.returnURL {
+		t.Fatalf("upload url = %v, want injected backend URL", data["url"])
+	}
+	if backend.filename != "audit.png" || backend.contentType != "image/png" || backend.body != "hello" {
+		t.Fatalf("backend input = filename %q content type %q body %q", backend.filename, backend.contentType, backend.body)
+	}
+	if backend.userID == nil || *backend.userID != 1 || !backend.isSuperAdmin {
+		t.Fatalf("backend actor = user %v super %t, want admin superuser", backend.userID, backend.isSuperAdmin)
+	}
+
+	uploadBody = "--fba-upload\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audit.txt\"\r\nContent-Type: text/plain\r\n\r\nhello\r\n--fba-upload--\r\n"
+	req = httptest.NewRequest("POST", "/api/v1/sys/files/upload", strings.NewReader(uploadBody))
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=fba-upload")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err = app.Test(req)
+	if err != nil {
+		t.Fatalf("POST /sys/files/upload(txt) error = %v", err)
+	}
+	defer resp.Body.Close()
+	body = map[string]any{}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode upload txt body: %v", err)
+	}
+	assertErrorEnvelope(t, resp, body, fiber.StatusBadRequest, "此文件格式 txt 暂不支持")
+	if backend.calls != 1 {
+		t.Fatalf("backend calls = %d, want only the accepted upload", backend.calls)
+	}
+}
+
 func TestAdminValidationErrorsMatchPython(t *testing.T) {
 	app := newAdminApp(t)
 
@@ -2497,6 +2547,26 @@ func newAdminAppWithConfig(t *testing.T, opts config.Options) *fiber.App {
 	return app
 }
 
+func newAdminAppWithFileUploadBackend(t *testing.T, backend adminservice.FileUploadBackend) *fiber.App {
+	t.Helper()
+	app := fiber.New(fiber.Config{ErrorHandler: middleware.ErrorHandler})
+	container := di.New()
+	if err := container.Provide(func() adminservice.FileUploadBackend {
+		return backend
+	}); err != nil {
+		t.Fatalf("Provide(FileUploadBackend) error = %v", err)
+	}
+	ctx := plugin.NewContext(plugin.ContextOptions{
+		Container: container,
+		APIGroup:  app.Group("/api/v1"),
+	})
+	if err := admin.FBAPlugin().Register(ctx); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	plugin.MountRoutes(ctx.APIGroup(), ctx.Routes(), plugin.WithContainer(ctx.Container()))
+	return app
+}
+
 func newAdminRuntimeApp(t *testing.T) *fiber.App {
 	t.Helper()
 	app := fiber.New()
@@ -2515,6 +2585,30 @@ type fakeAdminPluginRedis struct {
 	mu     sync.Mutex
 	values map[string]string
 	info   string
+}
+
+type recordingFileUploadBackend struct {
+	returnURL    string
+	calls        int
+	filename     string
+	contentType  string
+	body         string
+	userID       *int
+	isSuperAdmin bool
+}
+
+func (b *recordingFileUploadBackend) Upload(ctx context.Context, input adminservice.FileUploadInput) (admindto.UploadURL, error) {
+	body, err := io.ReadAll(input.Reader)
+	if err != nil {
+		return admindto.UploadURL{}, err
+	}
+	b.calls++
+	b.filename = input.Filename
+	b.contentType = input.ContentType
+	b.body = string(body)
+	b.userID = input.UserID
+	b.isSuperAdmin = input.IsSuperAdmin
+	return admindto.UploadURL{URL: b.returnURL}, nil
 }
 
 func newFakeAdminPluginRedis() *fakeAdminPluginRedis {

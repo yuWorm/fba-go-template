@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/yuWorm/fba-go-template/admin/internal/app/admin/dto"
 	"github.com/yuWorm/fba-go-template/admin/internal/app/admin/repo"
+	"github.com/yuWorm/fba-go-template/admin/internal/app/admin/service"
 	fbaerrors "github.com/yuWorm/fba-go/core/errors"
 	"github.com/yuWorm/fba-go/core/fiberx"
 	"github.com/yuWorm/fba-go/core/response"
@@ -534,7 +535,26 @@ func (h Handler) UploadFile(c fiber.Ctx) error {
 	if err != nil {
 		return fiberx.ValidationMissingField("file")
 	}
-	uploaded, err := h.files.Upload(c.RequestCtx(), file.Filename, file.Size)
+	opened, err := file.Open()
+	if err != nil {
+		return err
+	}
+	defer opened.Close()
+	var userID *int
+	isSuperAdmin := false
+	if user := currentUser(c); user != nil && user.ID > 0 {
+		id := int(user.ID)
+		userID = &id
+		isSuperAdmin = user.IsSuperAdmin
+	}
+	uploaded, err := h.files.Upload(c.RequestCtx(), service.FileUploadInput{
+		Filename:     file.Filename,
+		ContentType:  file.Header.Get("Content-Type"),
+		Size:         file.Size,
+		Reader:       opened,
+		UserID:       userID,
+		IsSuperAdmin: isSuperAdmin,
+	})
 	if err != nil {
 		return err
 	}

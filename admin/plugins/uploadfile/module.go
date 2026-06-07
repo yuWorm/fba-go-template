@@ -5,9 +5,12 @@ import (
 	"fmt"
 
 	"github.com/hibiken/asynq"
+	admindto "github.com/yuWorm/fba-go-template/admin/internal/app/admin/dto"
+	adminservice "github.com/yuWorm/fba-go-template/admin/internal/app/admin/service"
 	uploadapi "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/api"
 	uploadconfig "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/config"
 	uploadmigration "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/migration"
+	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/model"
 	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/repo"
 	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/service"
 	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/storage"
@@ -28,6 +31,28 @@ func FBAPlugin() plugin.Module {
 }
 
 type Module struct{}
+
+type adminUploadBackend struct {
+	svc *service.Service
+}
+
+func (b adminUploadBackend) Upload(ctx context.Context, input adminservice.FileUploadInput) (admindto.UploadURL, error) {
+	result, err := b.svc.Upload(ctx, service.UploadInput{
+		Filename:    input.Filename,
+		ContentType: input.ContentType,
+		Size:        input.Size,
+		Reader:      input.Reader,
+		SceneCode:   model.DefaultSceneCode,
+		Actor: service.Actor{
+			UserID:       input.UserID,
+			IsSuperAdmin: input.IsSuperAdmin,
+		},
+	})
+	if err != nil {
+		return admindto.UploadURL{}, err
+	}
+	return admindto.UploadURL{URL: result.File.URL}, nil
+}
 
 func (Module) Meta() plugin.Meta {
 	return plugin.Meta{
@@ -66,6 +91,11 @@ func (Module) Register(ctx plugin.Context) error {
 	svc := service.New(repository, registry, service.Options{
 		TokenSecret: []byte(ctx.Config().Auth.JWTSecret),
 	})
+	if err := ctx.Provide(func() adminservice.FileUploadBackend {
+		return adminUploadBackend{svc: svc}
+	}); err != nil {
+		return err
+	}
 	if err := ctx.Task(plugin.TaskDefinition{
 		Type:  cleanupTaskType,
 		Name:  cleanupTaskName,

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"path"
 	"strconv"
@@ -62,16 +63,45 @@ func (s *LogService) ClearOpera(ctx context.Context) error {
 	return s.repo.DeleteAllOperaLogs(ctx)
 }
 
-type FileService struct{}
+type FileUploadInput struct {
+	Filename     string
+	ContentType  string
+	Size         int64
+	Reader       io.Reader
+	UserID       *int
+	IsSuperAdmin bool
+}
+
+type FileUploadBackend interface {
+	Upload(ctx context.Context, input FileUploadInput) (dto.UploadURL, error)
+}
+
+type FileUploadBackendResolver interface {
+	Resolve(any) bool
+}
+
+type FileService struct {
+	resolver FileUploadBackendResolver
+}
 
 func NewFileService() *FileService {
 	return &FileService{}
 }
 
-func (s *FileService) Upload(_ context.Context, filename string, size int64) (dto.UploadURL, error) {
-	name, err := buildUploadFilename(filename, size, time.Now())
+func NewFileServiceWithResolver(resolver FileUploadBackendResolver) *FileService {
+	return &FileService{resolver: resolver}
+}
+
+func (s *FileService) Upload(ctx context.Context, input FileUploadInput) (dto.UploadURL, error) {
+	name, err := buildUploadFilename(input.Filename, input.Size, time.Now())
 	if err != nil {
 		return dto.UploadURL{}, err
+	}
+	if s != nil && s.resolver != nil {
+		var backend FileUploadBackend
+		if s.resolver.Resolve(&backend) && backend != nil {
+			return backend.Upload(ctx, input)
+		}
 	}
 	return dto.UploadURL{URL: "/static/upload/" + name}, nil
 }
