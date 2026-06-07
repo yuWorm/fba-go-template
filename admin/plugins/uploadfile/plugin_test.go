@@ -4,15 +4,20 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	uploadfile "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile"
+	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/model"
+	uploadrepo "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/repo"
 	"github.com/yuWorm/fba-go/core/command"
 	"github.com/yuWorm/fba-go/core/config"
 	"github.com/yuWorm/fba-go/core/db"
 	"github.com/yuWorm/fba-go/core/di"
 	"github.com/yuWorm/fba-go/core/plugin"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -95,6 +100,58 @@ func TestUploadfilePluginRegistersMigrationsWhenDBProviderExists(t *testing.T) {
 	}
 }
 
+func TestUploadfilePluginInitialDataUsesEnvConfig(t *testing.T) {
+	envFile := writeUploadfileEnvFile(t, `
+UPLOADFILE_STORAGE_PROVIDER=s3
+UPLOADFILE_STORAGE_BUCKET=plugin-bucket
+UPLOADFILE_STORAGE_REGION=ap-southeast-1
+UPLOADFILE_STORAGE_BASE_URL=https://cdn.example.test/files
+UPLOADFILE_S3_FORCE_PATH_STYLE=true
+UPLOADFILE_DEFAULT_MAX_SIZE=12345
+UPLOADFILE_DEFAULT_TEMP_TTL_SECONDS=600
+`)
+	t.Setenv("FBA_ENV_FILE", envFile)
+	container := di.New()
+	gormDB, err := gorm.Open(sqlite.Open("file:uploadfile_plugin_config?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+	provider := db.NewGORMProvider(gormDB, nil)
+	if err := container.Provide(func() db.Provider {
+		return provider
+	}); err != nil {
+		t.Fatalf("Provide() error = %v", err)
+	}
+	ctx := plugin.NewContext(plugin.ContextOptions{Container: container})
+	if err := uploadfile.FBAPlugin().Register(ctx); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	for _, migration := range ctx.Migrations() {
+		if err := migration.Up(context.Background()); err != nil {
+			t.Fatalf("migration %s Up() error = %v", migration.Version, err)
+		}
+	}
+
+	repository := uploadrepo.NewGORMRepository(provider)
+	storageConfig, err := repository.GetStorage(context.Background(), model.DefaultStorageCode)
+	if err != nil {
+		t.Fatalf("GetStorage() error = %v", err)
+	}
+	if storageConfig.Provider != model.ProviderS3 || ptrValue(storageConfig.Bucket) != "plugin-bucket" || ptrValue(storageConfig.Region) != "ap-southeast-1" {
+		t.Fatalf("storage = %+v, want env configured S3 storage", storageConfig)
+	}
+	if ptrValue(storageConfig.BaseURL) != "https://cdn.example.test/files" || ptrValue(storageConfig.Config) != `{"force_path_style":true}` {
+		t.Fatalf("storage url/config = %v / %v", storageConfig.BaseURL, storageConfig.Config)
+	}
+	scene, err := repository.GetScene(context.Background(), model.DefaultSceneCode)
+	if err != nil {
+		t.Fatalf("GetScene() error = %v", err)
+	}
+	if scene.MaxSize != 12345 || scene.TempTTLSeconds != 600 {
+		t.Fatalf("scene = %+v, want env configured limits", scene)
+	}
+}
+
 func TestUploadfilePluginRegistersCleanupCommand(t *testing.T) {
 	ctx := plugin.NewContext(plugin.ContextOptions{})
 	if err := uploadfile.FBAPlugin().Register(ctx); err != nil {
@@ -136,6 +193,22 @@ func routeKeys(routes map[string]plugin.Route) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+func writeUploadfileEnvFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	return path
+}
+
+func ptrValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 type testCommandRuntime struct {

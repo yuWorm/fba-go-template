@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/model"
+	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/repo"
 	"github.com/yuWorm/fba-go/core/db"
 	coremigration "github.com/yuWorm/fba-go/core/migration"
 	"gorm.io/gorm/clause"
@@ -27,18 +28,22 @@ func AutoMigrate(provider db.Provider) coremigration.Migration {
 	}
 }
 
-func InitialData(provider db.Provider) coremigration.Migration {
+func InitialData(provider db.Provider, seeds ...repo.Seed) coremigration.Migration {
 	return coremigration.Migration{
 		Scope:    "plugin:uploadfile",
 		Version:  "0002",
 		Name:     "uploadfile initial data",
 		Checksum: "go:init-data:uploadfile:0002",
 		Up: func(ctx context.Context) error {
-			storages := model.SeedStorages()
+			seed := repo.SeedData()
+			if len(seeds) > 0 {
+				seed = seeds[0]
+			}
+			storages := seed.Storages
 			if err := provider.Write().WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&storages).Error; err != nil {
 				return err
 			}
-			scenes := model.SeedScenes()
+			scenes := seed.Scenes
 			return provider.Write().WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&scenes).Error
 		},
 	}

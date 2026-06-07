@@ -223,6 +223,48 @@ func TestGORMRepositoryManagesScenes(t *testing.T) {
 	}
 }
 
+func TestInitialDataUsesConfiguredSeed(t *testing.T) {
+	ctx := context.Background()
+	provider := newSQLiteProvider(t)
+	if err := uploadmigration.AutoMigrate(provider).Up(ctx); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+	seed := repo.SeedData()
+	bucket := "configured-bucket"
+	region := "ap-southeast-1"
+	baseURL := "https://cdn.example.test/files"
+	config := `{"force_path_style":true}`
+	seed.Storages[0].Provider = model.ProviderS3
+	seed.Storages[0].Bucket = &bucket
+	seed.Storages[0].Region = &region
+	seed.Storages[0].BaseURL = &baseURL
+	seed.Storages[0].Config = &config
+	seed.Scenes[0].MaxSize = 12345
+	seed.Scenes[0].TempTTLSeconds = 600
+
+	if err := uploadmigration.InitialData(provider, seed).Up(ctx); err != nil {
+		t.Fatalf("InitialData() error = %v", err)
+	}
+	repository := repo.NewGORMRepository(provider)
+	storageConfig, err := repository.GetStorage(ctx, model.DefaultStorageCode)
+	if err != nil {
+		t.Fatalf("GetStorage() error = %v", err)
+	}
+	if storageConfig.Provider != model.ProviderS3 || ptrValue(storageConfig.Bucket) != bucket || ptrValue(storageConfig.Region) != region {
+		t.Fatalf("storage = %+v, want configured S3 seed", storageConfig)
+	}
+	if ptrValue(storageConfig.BaseURL) != baseURL || ptrValue(storageConfig.Config) != config {
+		t.Fatalf("storage url/config = %v / %v", storageConfig.BaseURL, storageConfig.Config)
+	}
+	scene, err := repository.GetScene(ctx, model.DefaultSceneCode)
+	if err != nil {
+		t.Fatalf("GetScene() error = %v", err)
+	}
+	if scene.MaxSize != 12345 || scene.TempTTLSeconds != 600 {
+		t.Fatalf("scene = %+v, want configured limits", scene)
+	}
+}
+
 func newSQLiteProvider(t *testing.T) db.Provider {
 	t.Helper()
 	name := strings.ReplaceAll(t.Name(), "/", "_")

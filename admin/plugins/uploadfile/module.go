@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	uploadapi "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/api"
+	uploadconfig "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/config"
 	uploadmigration "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/migration"
 	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/repo"
 	"github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/service"
@@ -32,14 +33,23 @@ func (Module) Meta() plugin.Meta {
 }
 
 func (Module) Register(ctx plugin.Context) error {
-	repository := repo.Repository(repo.NewMemoryRepository(repo.SeedData()))
+	configOptions, err := uploadconfig.Load(uploadconfig.LoadOptions{})
+	if err != nil {
+		return err
+	}
+	seed, err := uploadconfig.ApplyToSeed(repo.SeedData(), configOptions)
+	if err != nil {
+		return err
+	}
+
+	repository := repo.Repository(repo.NewMemoryRepository(seed))
 	var provider db.Provider
 	if ctx.Container().Resolve(&provider) && provider != nil && provider.Write() != nil {
 		repository = repo.NewGORMRepository(provider)
 		if err := ctx.Migration(uploadmigration.AutoMigrate(provider)); err != nil {
 			return err
 		}
-		if err := ctx.Migration(uploadmigration.InitialData(provider)); err != nil {
+		if err := ctx.Migration(uploadmigration.InitialData(provider, seed)); err != nil {
 			return err
 		}
 	}
