@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 	uploadapi "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile/api"
@@ -304,6 +305,129 @@ func TestUploadAPIScopesFilesAndSharesByOwnerForNormalUsers(t *testing.T) {
 	}
 }
 
+func TestUploadAPIAccessTokenRejectsTTLAboveMax(t *testing.T) {
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := uploadservice.New(repository, registry, uploadservice.Options{
+		TokenSecret:           []byte("api-test-secret"),
+		FileAccessTokenMaxTTL: 5 * time.Minute,
+	})
+	app := newUploadApp(t, svc)
+
+	resp, body := requestMultipart(t, app, http.MethodPost, "/api/v1/sys/upload/files", map[string]string{
+		"file": "private.txt",
+	}, map[string]string{
+		"scene_code": "default",
+	}, []byte("private"))
+	assertStatusOK(t, resp)
+	file := assertMap(t, envelopeMap(t, body)["file"])
+	fileID := int(file["id"].(float64))
+
+	resp, body = requestJSON(t, app, http.MethodPost, "/api/v1/sys/upload/files/"+itoa(fileID)+"/access-token", `{"ttl_seconds":3600}`)
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Fatalf("access-token status = %d, want 400; body=%v", resp.StatusCode, body)
+	}
+
+	resp, body = requestJSON(t, app, http.MethodPost, "/api/v1/sys/upload/files/"+itoa(fileID)+"/access-token", `{"ttl_seconds":300}`)
+	assertStatusOK(t, resp)
+	access := envelopeMap(t, body)
+	if token, ok := access["download_token"].(string); !ok || token == "" {
+		t.Fatalf("download_token = %v, want non-empty", access["download_token"])
+	}
+}
+
+func TestUploadAPIPresignedCompleteRejectsInvalidStorageMetadata(t *testing.T) {
+	tests := []struct {
+		name    string
+		backend *apiPresignBackend
+	}{
+		{
+			name:    "missing object",
+			backend: &apiPresignBackend{headErr: storage.ErrUnsupported},
+		},
+		{
+			name:    "size mismatch",
+			backend: &apiPresignBackend{headInfo: storage.ObjectInfo{Size: 5, ContentType: "text/plain"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repository := repo.NewMemoryRepository(repo.SeedData())
+			registry := storage.NewRegistry()
+			registry.Add(model.DefaultStorageCode, tt.backend)
+			svc := uploadservice.New(repository, registry, uploadservice.Options{TokenSecret: []byte("api-test-secret")})
+			app := newUploadApp(t, svc)
+
+			resp, body := requestJSON(t, app, http.MethodPost, "/api/v1/sys/upload/files/presign", `{"filename":"direct.txt","content_type":"text/plain","size":6,"scene_code":"default"}`)
+			assertStatusOK(t, resp)
+			file := assertMap(t, envelopeMap(t, body)["file"])
+			fileID := int(file["id"].(float64))
+
+			resp, body = requestJSON(t, app, http.MethodPost, "/api/v1/sys/upload/files/"+itoa(fileID)+"/complete", "")
+			if resp.StatusCode != fiber.StatusBadRequest {
+				t.Fatalf("complete status = %d, want 400; body=%v", resp.StatusCode, body)
+			}
+			object, err := repository.GetObject(context.Background(), fileID)
+			if err != nil {
+				t.Fatalf("GetObject() error = %v", err)
+			}
+			if object.Status != model.StatusPending {
+				t.Fatalf("object status = %q, want pending after failed completion", object.Status)
+			}
+		})
+	}
+}
+
+func TestUploadAPIPublicPrivateFileRequiresValidAccessToken(t *testing.T) {
+	current := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := uploadservice.New(repository, registry, uploadservice.Options{
+		TokenSecret: []byte("api-test-secret"),
+		Now:         func() time.Time { return current },
+	})
+	app := newUploadApp(t, svc)
+
+	resp, body := requestMultipart(t, app, http.MethodPost, "/api/v1/sys/upload/files", map[string]string{
+		"file": "private.txt",
+	}, map[string]string{
+		"scene_code": "default",
+	}, []byte("private body"))
+	assertStatusOK(t, resp)
+	file := assertMap(t, envelopeMap(t, body)["file"])
+	fileID := int(file["id"].(float64))
+	publicURL := file["url"].(string)
+
+	resp, raw := requestRaw(t, app, http.MethodGet, publicURL, "", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusForbidden {
+		t.Fatalf("public private file status = %d body=%s, want 403", resp.StatusCode, string(raw))
+	}
+
+	resp, body = requestJSON(t, app, http.MethodPost, "/api/v1/sys/upload/files/"+itoa(fileID)+"/access-token", `{"ttl_seconds":60}`)
+	assertStatusOK(t, resp)
+	access := envelopeMap(t, body)
+	downloadURL := access["download_url"].(string)
+
+	resp, raw = requestRaw(t, app, http.MethodGet, downloadURL, "", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("public private file with token status = %d body=%s, want 200", resp.StatusCode, string(raw))
+	}
+	if string(raw) != "private body" {
+		t.Fatalf("public private file body = %q, want private body", string(raw))
+	}
+
+	current = current.Add(61 * time.Second)
+	resp, raw = requestRaw(t, app, http.MethodGet, downloadURL, "", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusForbidden {
+		t.Fatalf("expired access token status = %d body=%s, want 403", resp.StatusCode, string(raw))
+	}
+}
+
 func newUploadApp(t *testing.T, svc *uploadservice.Service) *fiber.App {
 	t.Helper()
 	return newUploadAppWithUser(t, svc, &rbac.CurrentUser{ID: 42, Username: "api-user", IsStaff: true, IsSuperAdmin: true})
@@ -454,4 +578,47 @@ func itoa(value int) string {
 		value /= 10
 	}
 	return string(digits[i:])
+}
+
+type apiPresignBackend struct {
+	headInfo storage.ObjectInfo
+	headErr  error
+}
+
+func (*apiPresignBackend) Put(context.Context, string, io.Reader, storage.PutOptions) (storage.ObjectInfo, error) {
+	return storage.ObjectInfo{}, storage.ErrUnsupported
+}
+
+func (*apiPresignBackend) Open(context.Context, string) (io.ReadCloser, storage.ObjectInfo, error) {
+	return nil, storage.ObjectInfo{}, storage.ErrUnsupported
+}
+
+func (b *apiPresignBackend) Head(_ context.Context, key string) (storage.ObjectInfo, error) {
+	if b.headErr != nil {
+		return storage.ObjectInfo{}, b.headErr
+	}
+	info := b.headInfo
+	info.Key = key
+	return info, nil
+}
+
+func (*apiPresignBackend) Delete(context.Context, string) error {
+	return nil
+}
+
+func (*apiPresignBackend) PresignPut(_ context.Context, key string, ttl time.Duration, opts storage.PutOptions) (storage.PresignedURL, error) {
+	return storage.PresignedURL{
+		Method:    http.MethodPut,
+		URL:       "https://signed.example.test/" + key,
+		ExpiresAt: time.Now().Add(ttl),
+		Headers:   map[string]string{"Content-Type": opts.ContentType},
+	}, nil
+}
+
+func (*apiPresignBackend) PresignGet(context.Context, string, time.Duration) (storage.PresignedURL, error) {
+	return storage.PresignedURL{}, storage.ErrUnsupported
+}
+
+func (*apiPresignBackend) PublicURL(key string) string {
+	return "https://cdn.example.test/" + key
 }
