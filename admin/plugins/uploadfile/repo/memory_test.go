@@ -209,6 +209,99 @@ func TestMemoryRepositoryListObjectsIgnoresDeletedRefsForOwnerFilters(t *testing
 	}
 }
 
+func TestMemoryRepositoryUploadUsageCountsLiveObjectsAndDistinctOwnerRefs(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	active, err := repository.CreateObject(ctx, repo.CreateObjectParam{
+		UUID:         "usage-active",
+		StorageCode:  model.DefaultStorageCode,
+		Provider:     model.ProviderLocal,
+		ObjectKey:    "uploads/default/usage-active.txt",
+		OriginalName: "usage-active.txt",
+		Ext:          "txt",
+		Mime:         "text/plain",
+		Size:         5,
+		Visibility:   model.VisibilityPrivate,
+		Status:       model.StatusActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject(active) error = %v", err)
+	}
+	pending, err := repository.CreateObject(ctx, repo.CreateObjectParam{
+		UUID:         "usage-pending",
+		StorageCode:  model.DefaultStorageCode,
+		Provider:     model.ProviderLocal,
+		ObjectKey:    "uploads/default/usage-pending.txt",
+		OriginalName: "usage-pending.txt",
+		Ext:          "txt",
+		Mime:         "text/plain",
+		Size:         7,
+		Visibility:   model.VisibilityPrivate,
+		Status:       model.StatusPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject(pending) error = %v", err)
+	}
+	if _, err := repository.CreateObject(ctx, repo.CreateObjectParam{
+		UUID:         "usage-deleted",
+		StorageCode:  model.DefaultStorageCode,
+		Provider:     model.ProviderLocal,
+		ObjectKey:    "uploads/default/usage-deleted.txt",
+		OriginalName: "usage-deleted.txt",
+		Ext:          "txt",
+		Mime:         "text/plain",
+		Size:         11,
+		Visibility:   model.VisibilityPrivate,
+		Status:       model.StatusDeleted,
+	}); err != nil {
+		t.Fatalf("CreateObject(deleted) error = %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := repository.CreateRef(ctx, repo.CreateRefParam{
+			FileID:    active.ID,
+			SceneCode: model.DefaultSceneCode,
+			Status:    model.RefStatusActive,
+			OwnerType: strPtr("user"),
+			OwnerID:   strPtr("7"),
+		}); err != nil {
+			t.Fatalf("CreateRef(active duplicate %d) error = %v", i, err)
+		}
+	}
+	if _, err := repository.CreateRef(ctx, repo.CreateRefParam{
+		FileID:    pending.ID,
+		SceneCode: model.DefaultSceneCode,
+		Status:    model.RefStatusActive,
+		OwnerType: strPtr("user"),
+		OwnerID:   strPtr("8"),
+	}); err != nil {
+		t.Fatalf("CreateRef(pending owner 8) error = %v", err)
+	}
+	if _, err := repository.CreateRef(ctx, repo.CreateRefParam{
+		FileID:    pending.ID,
+		SceneCode: model.DefaultSceneCode,
+		Status:    model.RefStatusDeleted,
+		OwnerType: strPtr("user"),
+		OwnerID:   strPtr("7"),
+	}); err != nil {
+		t.Fatalf("CreateRef(deleted owner 7) error = %v", err)
+	}
+
+	global, err := repository.UploadUsage(ctx, repo.UsageFilter{})
+	if err != nil {
+		t.Fatalf("UploadUsage(global) error = %v", err)
+	}
+	if global.Files != 2 || global.Bytes != 12 {
+		t.Fatalf("global usage = %+v, want 2 files and 12 bytes", global)
+	}
+	owner, err := repository.UploadUsage(ctx, repo.UsageFilter{OwnerType: "user", OwnerID: "7"})
+	if err != nil {
+		t.Fatalf("UploadUsage(owner) error = %v", err)
+	}
+	if owner.Files != 1 || owner.Bytes != 5 {
+		t.Fatalf("owner usage = %+v, want distinct active object only", owner)
+	}
+}
+
 func strPtr(value string) *string {
 	return &value
 }

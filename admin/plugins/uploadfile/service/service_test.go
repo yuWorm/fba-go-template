@@ -984,6 +984,152 @@ func TestServiceCleanupDeletesExpiredPendingPresignedUploads(t *testing.T) {
 	}
 }
 
+func TestServiceRejectsMultipartUploadWhenTotalByteQuotaExceeded(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	backend := &quotaBackend{}
+	registry.Add(model.DefaultStorageCode, backend)
+	svc := service.New(repository, registry, service.Options{
+		TokenSecret:   []byte("test-secret"),
+		MaxTotalBytes: 8,
+	})
+
+	if _, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "first.txt",
+		ContentType: "text/plain",
+		Size:        5,
+		Reader:      strings.NewReader("first"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       service.Actor{UserID: intPtr(7)},
+	}); err != nil {
+		t.Fatalf("first Upload() error = %v", err)
+	}
+	if backend.putCalls != 1 {
+		t.Fatalf("put calls after first upload = %d, want 1", backend.putCalls)
+	}
+
+	if _, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "second.txt",
+		ContentType: "text/plain",
+		Size:        4,
+		Reader:      strings.NewReader("next"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       service.Actor{UserID: intPtr(8)},
+	}); err == nil {
+		t.Fatal("second Upload() succeeded over total byte quota")
+	}
+	if backend.putCalls != 1 {
+		t.Fatalf("put calls after quota rejection = %d, want still 1", backend.putCalls)
+	}
+}
+
+func TestServiceRejectsMultipartUploadWhenTotalFileQuotaExceeded(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	backend := &quotaBackend{}
+	registry.Add(model.DefaultStorageCode, backend)
+	svc := service.New(repository, registry, service.Options{
+		TokenSecret:   []byte("test-secret"),
+		MaxTotalFiles: 1,
+	})
+
+	if _, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "first.txt",
+		ContentType: "text/plain",
+		Size:        5,
+		Reader:      strings.NewReader("first"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       service.Actor{UserID: intPtr(7)},
+	}); err != nil {
+		t.Fatalf("first Upload() error = %v", err)
+	}
+	if _, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "second.txt",
+		ContentType: "text/plain",
+		Size:        1,
+		Reader:      strings.NewReader("x"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       service.Actor{UserID: intPtr(8)},
+	}); err == nil {
+		t.Fatal("second Upload() succeeded over total file quota")
+	}
+	if backend.putCalls != 1 {
+		t.Fatalf("put calls after file quota rejection = %d, want 1", backend.putCalls)
+	}
+}
+
+func TestServiceRejectsPresignWhenOwnerByteQuotaExceeded(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	backend := &quotaBackend{}
+	registry.Add(model.DefaultStorageCode, backend)
+	svc := service.New(repository, registry, service.Options{
+		TokenSecret:   []byte("test-secret"),
+		MaxOwnerBytes: 8,
+	})
+
+	if _, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "first.txt",
+		ContentType: "text/plain",
+		Size:        5,
+		Reader:      strings.NewReader("first"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       service.Actor{UserID: intPtr(7)},
+	}); err != nil {
+		t.Fatalf("first Upload() error = %v", err)
+	}
+	if _, err := svc.CreatePresignedUpload(ctx, service.PresignUploadInput{
+		Filename:    "second.txt",
+		ContentType: "text/plain",
+		Size:        4,
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       service.Actor{UserID: intPtr(7)},
+	}); err == nil {
+		t.Fatal("CreatePresignedUpload() succeeded over owner byte quota")
+	}
+	if backend.presignPutCalls != 0 {
+		t.Fatalf("presign calls after quota rejection = %d, want 0", backend.presignPutCalls)
+	}
+}
+
+func TestServiceRejectsPresignWhenOwnerFileQuotaExceeded(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	backend := &quotaBackend{}
+	registry.Add(model.DefaultStorageCode, backend)
+	svc := service.New(repository, registry, service.Options{
+		TokenSecret:   []byte("test-secret"),
+		MaxOwnerFiles: 1,
+	})
+
+	if _, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "first.txt",
+		ContentType: "text/plain",
+		Size:        5,
+		Reader:      strings.NewReader("first"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       service.Actor{UserID: intPtr(7)},
+	}); err != nil {
+		t.Fatalf("first Upload() error = %v", err)
+	}
+	if _, err := svc.CreatePresignedUpload(ctx, service.PresignUploadInput{
+		Filename:    "second.txt",
+		ContentType: "text/plain",
+		Size:        1,
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       service.Actor{UserID: intPtr(7)},
+	}); err == nil {
+		t.Fatal("CreatePresignedUpload() succeeded over owner file quota")
+	}
+	if backend.presignPutCalls != 0 {
+		t.Fatalf("presign calls after owner file quota rejection = %d, want 0", backend.presignPutCalls)
+	}
+}
+
 func TestServiceValidatesSceneExtensionAndSize(t *testing.T) {
 	ctx := context.Background()
 	repository := repo.NewMemoryRepository(repo.SeedData())
@@ -1083,5 +1229,51 @@ func (*fakePresignBackend) PresignGet(context.Context, string, time.Duration) (s
 }
 
 func (*fakePresignBackend) PublicURL(key string) string {
+	return "https://cdn.example.test/" + key
+}
+
+type quotaBackend struct {
+	putCalls        int
+	presignPutCalls int
+	deletedKeys     []string
+}
+
+func (b *quotaBackend) Put(_ context.Context, key string, reader io.Reader, opts storage.PutOptions) (storage.ObjectInfo, error) {
+	b.putCalls++
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		return storage.ObjectInfo{}, err
+	}
+	return storage.ObjectInfo{Key: key, Size: int64(len(body)), ContentType: opts.ContentType}, nil
+}
+
+func (*quotaBackend) Open(context.Context, string) (io.ReadCloser, storage.ObjectInfo, error) {
+	return nil, storage.ObjectInfo{}, storage.ErrUnsupported
+}
+
+func (*quotaBackend) Head(_ context.Context, key string) (storage.ObjectInfo, error) {
+	return storage.ObjectInfo{Key: key}, nil
+}
+
+func (b *quotaBackend) Delete(_ context.Context, key string) error {
+	b.deletedKeys = append(b.deletedKeys, key)
+	return nil
+}
+
+func (b *quotaBackend) PresignPut(_ context.Context, key string, ttl time.Duration, opts storage.PutOptions) (storage.PresignedURL, error) {
+	b.presignPutCalls++
+	return storage.PresignedURL{
+		Method:    http.MethodPut,
+		URL:       "https://signed.example.test/" + key,
+		ExpiresAt: time.Now().Add(ttl),
+		Headers:   map[string]string{"Content-Type": opts.ContentType},
+	}, nil
+}
+
+func (*quotaBackend) PresignGet(context.Context, string, time.Duration) (storage.PresignedURL, error) {
+	return storage.PresignedURL{}, storage.ErrUnsupported
+}
+
+func (*quotaBackend) PublicURL(key string) string {
 	return "https://cdn.example.test/" + key
 }

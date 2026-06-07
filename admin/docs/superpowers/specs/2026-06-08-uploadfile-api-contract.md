@@ -216,3 +216,10 @@ Lifecycle options:
 - `UPLOADFILE_FILE_ACCESS_TOKEN_MAX_TTL_SECONDS`: maximum explicit private file access token TTL.
 - `UPLOADFILE_DIRECT_UPLOAD_PRESIGN_TTL_SECONDS`: default presigned PUT TTL for direct upload.
 - `UPLOADFILE_PENDING_UPLOAD_TTL_SECONDS`: cleanup grace period for stale pending direct-upload objects.
+
+Quota options:
+
+- `UPLOADFILE_MAX_TOTAL_BYTES`: maximum bytes across all non-deleted upload objects; `0` disables the limit.
+- `UPLOADFILE_MAX_OWNER_BYTES`: maximum bytes for one ref owner scope; `0` disables the limit.
+- `UPLOADFILE_MAX_TOTAL_FILES`: maximum non-deleted upload object count; `0` disables the limit.
+- `UPLOADFILE_MAX_OWNER_FILES`: maximum non-deleted upload object count for one ref owner scope; `0` disables the limit.

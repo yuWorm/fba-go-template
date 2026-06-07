@@ -24,6 +24,10 @@ UPLOADFILE_DOWNLOAD_TOKEN_TTL_SECONDS=120
 UPLOADFILE_FILE_ACCESS_TOKEN_MAX_TTL_SECONDS=3600
 UPLOADFILE_DIRECT_UPLOAD_PRESIGN_TTL_SECONDS=300
 UPLOADFILE_PENDING_UPLOAD_TTL_SECONDS=900
+UPLOADFILE_MAX_TOTAL_BYTES=5555
+UPLOADFILE_MAX_OWNER_BYTES=4444
+UPLOADFILE_MAX_TOTAL_FILES=33
+UPLOADFILE_MAX_OWNER_FILES=22
 `)
 
 	opts, err := uploadconfig.Load(uploadconfig.LoadOptions{EnvFile: envFile})
@@ -51,6 +55,9 @@ UPLOADFILE_PENDING_UPLOAD_TTL_SECONDS=900
 	}
 	if opts.DownloadTokenTTLSeconds != 120 || opts.FileAccessTokenMaxTTLSeconds != 3600 || opts.DirectUploadPresignTTLSeconds != 300 || opts.PendingUploadTTLSeconds != 900 {
 		t.Fatalf("service ttl options = %+v, want configured lifecycle seconds", opts)
+	}
+	if opts.MaxTotalBytes != 5555 || opts.MaxOwnerBytes != 4444 || opts.MaxTotalFiles != 33 || opts.MaxOwnerFiles != 22 {
+		t.Fatalf("quota options = %+v, want configured quota limits", opts)
 	}
 }
 

@@ -187,6 +187,31 @@ func TestUploadfilePluginRegistersAdminUploadBackend(t *testing.T) {
 	}
 }
 
+func TestUploadfilePluginAppliesQuotaEnvToAdminUploadBackend(t *testing.T) {
+	envFile := writeUploadfileEnvFile(t, "UPLOADFILE_LOCAL_ROOT="+t.TempDir()+"\nUPLOADFILE_MAX_TOTAL_BYTES=4\n")
+	t.Setenv("FBA_ENV_FILE", envFile)
+	container := di.New()
+	ctx := plugin.NewContext(plugin.ContextOptions{Container: container})
+	if err := uploadfile.FBAPlugin().Register(ctx); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	var backend adminservice.FileUploadBackend
+	if !container.Resolve(&backend) || backend == nil {
+		t.Fatal("admin FileUploadBackend was not registered")
+	}
+	userID := 7
+	_, err := backend.Upload(context.Background(), adminservice.FileUploadInput{
+		Filename:    "quota.txt",
+		ContentType: "text/plain",
+		Size:        5,
+		Reader:      strings.NewReader("quota"),
+		UserID:      &userID,
+	})
+	if err == nil {
+		t.Fatal("backend Upload() succeeded over env total byte quota")
+	}
+}
+
 func TestUploadfilePluginRegistersCleanupTaskMetadata(t *testing.T) {
 	ctx := plugin.NewContext(plugin.ContextOptions{})
 	if err := uploadfile.FBAPlugin().Register(ctx); err != nil {

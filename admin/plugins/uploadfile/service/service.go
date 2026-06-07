@@ -30,6 +30,10 @@ type Options struct {
 	DownloadTokenTTL       time.Duration
 	FileAccessTokenMaxTTL  time.Duration
 	DirectUploadPresignTTL time.Duration
+	MaxTotalBytes          int64
+	MaxOwnerBytes          int64
+	MaxTotalFiles          int64
+	MaxOwnerFiles          int64
 }
 
 type Service struct {
@@ -40,6 +44,10 @@ type Service struct {
 	tokenTTL          time.Duration
 	accessTokenMaxTTL time.Duration
 	directUploadTTL   time.Duration
+	maxTotalBytes     int64
+	maxOwnerBytes     int64
+	maxTotalFiles     int64
+	maxOwnerFiles     int64
 }
 
 type UploadInput struct {
@@ -133,7 +141,71 @@ func New(repository repo.Repository, registry *storage.Registry, opts Options) *
 		tokenTTL:          opts.DownloadTokenTTL,
 		accessTokenMaxTTL: opts.FileAccessTokenMaxTTL,
 		directUploadTTL:   opts.DirectUploadPresignTTL,
+		maxTotalBytes:     opts.MaxTotalBytes,
+		maxOwnerBytes:     opts.MaxOwnerBytes,
+		maxTotalFiles:     opts.MaxTotalFiles,
+		maxOwnerFiles:     opts.MaxOwnerFiles,
 	}
+}
+
+func resolveUploadOwner(actor Actor, inputOwnerType *string, inputOwnerID *string) (*string, *string, error) {
+	ownerType := cleanOptional(inputOwnerType)
+	ownerID := cleanOptional(inputOwnerID)
+	if ownerType == nil && ownerID == nil {
+		ownerType, ownerID = actor.defaultOwner()
+	}
+	if !actor.allowsOwner(ownerType, ownerID) {
+		return nil, nil, forbidden("file owner is not allowed")
+	}
+	return ownerType, ownerID, nil
+}
+
+func (s *Service) enforceUploadQuota(ctx context.Context, size int64, ownerType *string, ownerID *string) error {
+	if size < 0 {
+		return badRequest("file size is invalid", nil)
+	}
+	if s.maxTotalBytes > 0 || s.maxTotalFiles > 0 {
+		usage, err := s.repo.UploadUsage(ctx, repo.UsageFilter{})
+		if err != nil {
+			return err
+		}
+		if exceedsByteQuota(usage.Bytes, size, s.maxTotalBytes) {
+			return badRequest("upload total byte quota exceeded", nil)
+		}
+		if exceedsFileQuota(usage.Files, s.maxTotalFiles) {
+			return badRequest("upload total file quota exceeded", nil)
+		}
+	}
+	if (s.maxOwnerBytes > 0 || s.maxOwnerFiles > 0) && ownerValue(ownerType) != "" && ownerValue(ownerID) != "" {
+		usage, err := s.repo.UploadUsage(ctx, repo.UsageFilter{
+			OwnerType: ownerValue(ownerType),
+			OwnerID:   ownerValue(ownerID),
+		})
+		if err != nil {
+			return err
+		}
+		if exceedsByteQuota(usage.Bytes, size, s.maxOwnerBytes) {
+			return badRequest("upload owner byte quota exceeded", nil)
+		}
+		if exceedsFileQuota(usage.Files, s.maxOwnerFiles) {
+			return badRequest("upload owner file quota exceeded", nil)
+		}
+	}
+	return nil
+}
+
+func exceedsByteQuota(current int64, incoming int64, limit int64) bool {
+	if limit <= 0 {
+		return false
+	}
+	return current > limit || incoming > limit-current
+}
+
+func exceedsFileQuota(current int64, limit int64) bool {
+	if limit <= 0 {
+		return false
+	}
+	return current+1 > limit
 }
 
 func (s *Service) Upload(ctx context.Context, input UploadInput) (dto.UploadResult, error) {
@@ -168,6 +240,13 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (dto.UploadResu
 	}
 	if scene.AllowedMimes != nil && !allowed(contentType, scene.AllowedMimes) {
 		return dto.UploadResult{}, badRequest("file MIME type is not allowed", nil)
+	}
+	ownerType, ownerID, err := resolveUploadOwner(input.Actor, input.OwnerType, input.OwnerID)
+	if err != nil {
+		return dto.UploadResult{}, err
+	}
+	if err := s.enforceUploadQuota(ctx, input.Size, ownerType, ownerID); err != nil {
+		return dto.UploadResult{}, err
 	}
 
 	storageConfig, backend, err := s.backend(ctx, scene)
@@ -213,14 +292,6 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (dto.UploadResu
 		refStatus = model.RefStatusTemp
 		expire := s.now().Add(time.Duration(scene.TempTTLSeconds) * time.Second)
 		expiresAt = &expire
-	}
-	ownerType := cleanOptional(input.OwnerType)
-	ownerID := cleanOptional(input.OwnerID)
-	if ownerType == nil && ownerID == nil {
-		ownerType, ownerID = input.Actor.defaultOwner()
-	}
-	if !input.Actor.allowsOwner(ownerType, ownerID) {
-		return dto.UploadResult{}, forbidden("file owner is not allowed")
 	}
 	ref, err := s.repo.CreateRef(ctx, repo.CreateRefParam{
 		FileID:      object.ID,
@@ -270,6 +341,13 @@ func (s *Service) CreatePresignedUpload(ctx context.Context, input PresignUpload
 	if scene.AllowedMimes != nil && !allowed(contentType, scene.AllowedMimes) {
 		return dto.PresignedUploadResult{}, badRequest("file MIME type is not allowed", nil)
 	}
+	ownerType, ownerID, err := resolveUploadOwner(input.Actor, input.OwnerType, input.OwnerID)
+	if err != nil {
+		return dto.PresignedUploadResult{}, err
+	}
+	if err := s.enforceUploadQuota(ctx, input.Size, ownerType, ownerID); err != nil {
+		return dto.PresignedUploadResult{}, err
+	}
 
 	storageConfig, backend, err := s.backend(ctx, scene)
 	if err != nil {
@@ -313,14 +391,6 @@ func (s *Service) CreatePresignedUpload(ctx context.Context, input PresignUpload
 		refStatus = model.RefStatusTemp
 		expire := s.now().Add(time.Duration(scene.TempTTLSeconds) * time.Second)
 		expiresAt = &expire
-	}
-	ownerType := cleanOptional(input.OwnerType)
-	ownerID := cleanOptional(input.OwnerID)
-	if ownerType == nil && ownerID == nil {
-		ownerType, ownerID = input.Actor.defaultOwner()
-	}
-	if !input.Actor.allowsOwner(ownerType, ownerID) {
-		return dto.PresignedUploadResult{}, forbidden("file owner is not allowed")
 	}
 	ref, err := s.repo.CreateRef(ctx, repo.CreateRefParam{
 		FileID:      object.ID,

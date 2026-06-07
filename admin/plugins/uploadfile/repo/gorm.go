@@ -229,6 +229,23 @@ func (r *GORMRepository) ListPendingObjectsBefore(ctx context.Context, before ti
 	return items, err
 }
 
+func (r *GORMRepository) UploadUsage(ctx context.Context, filter UsageFilter) (UsageStats, error) {
+	query := r.provider.Read().WithContext(ctx).Model(&model.FileObject{}).Where("status <> ?", model.StatusDeleted)
+	if filter.OwnerType != "" || filter.OwnerID != "" {
+		subquery := r.provider.Read().WithContext(ctx).Model(&model.FileRef{}).Select("DISTINCT file_id").Where("status <> ?", model.RefStatusDeleted)
+		if filter.OwnerType != "" {
+			subquery = subquery.Where("owner_type = ?", filter.OwnerType)
+		}
+		if filter.OwnerID != "" {
+			subquery = subquery.Where("owner_id = ?", filter.OwnerID)
+		}
+		query = query.Where("id IN (?)", subquery)
+	}
+	var stats UsageStats
+	err := query.Select("COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes").Scan(&stats).Error
+	return stats, err
+}
+
 func (r *GORMRepository) UpdateObjectStatus(ctx context.Context, id int, status string) error {
 	updates := map[string]any{
 		"status":       status,

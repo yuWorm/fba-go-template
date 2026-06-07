@@ -40,6 +40,11 @@ type Options struct {
 	FileAccessTokenMaxTTLSeconds  int
 	DirectUploadPresignTTLSeconds int
 	PendingUploadTTLSeconds       int
+
+	MaxTotalBytes int64
+	MaxOwnerBytes int64
+	MaxTotalFiles int64
+	MaxOwnerFiles int64
 }
 
 func Load(opts LoadOptions) (Options, error) {
@@ -221,6 +226,18 @@ func optionsFromValues(values map[string]string) (Options, error) {
 	if opts.PendingUploadTTLSeconds, err = intValue(values, "UPLOADFILE_PENDING_UPLOAD_TTL_SECONDS"); err != nil {
 		return Options{}, err
 	}
+	if opts.MaxTotalBytes, err = int64Value(values, "UPLOADFILE_MAX_TOTAL_BYTES"); err != nil {
+		return Options{}, err
+	}
+	if opts.MaxOwnerBytes, err = int64Value(values, "UPLOADFILE_MAX_OWNER_BYTES"); err != nil {
+		return Options{}, err
+	}
+	if opts.MaxTotalFiles, err = int64Value(values, "UPLOADFILE_MAX_TOTAL_FILES"); err != nil {
+		return Options{}, err
+	}
+	if opts.MaxOwnerFiles, err = int64Value(values, "UPLOADFILE_MAX_OWNER_FILES"); err != nil {
+		return Options{}, err
+	}
 	return opts, nil
 }
 
@@ -310,6 +327,10 @@ var uploadfileEnvKeys = []string{
 	"UPLOADFILE_FILE_ACCESS_TOKEN_MAX_TTL_SECONDS",
 	"UPLOADFILE_DIRECT_UPLOAD_PRESIGN_TTL_SECONDS",
 	"UPLOADFILE_PENDING_UPLOAD_TTL_SECONDS",
+	"UPLOADFILE_MAX_TOTAL_BYTES",
+	"UPLOADFILE_MAX_OWNER_BYTES",
+	"UPLOADFILE_MAX_TOTAL_FILES",
+	"UPLOADFILE_MAX_OWNER_FILES",
 }
 
 func boolValue(values map[string]string, key string) (bool, error) {

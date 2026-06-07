@@ -275,6 +275,23 @@ func (r *MemoryRepository) ListPendingObjectsBefore(_ context.Context, before ti
 	return items, nil
 }
 
+func (r *MemoryRepository) UploadUsage(_ context.Context, filter UsageFilter) (UsageStats, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var stats UsageStats
+	for _, item := range r.objects {
+		if item.Status == model.StatusDeleted {
+			continue
+		}
+		if (filter.OwnerType != "" || filter.OwnerID != "") && !r.objectHasMatchingUsageRef(item.ID, filter) {
+			continue
+		}
+		stats.Files++
+		stats.Bytes += item.Size
+	}
+	return stats, nil
+}
+
 func (r *MemoryRepository) objectHasMatchingRef(fileID int, filter ObjectFilter) bool {
 	for _, ref := range r.refs {
 		if ref.FileID != fileID {
@@ -284,6 +301,25 @@ func (r *MemoryRepository) objectHasMatchingRef(fileID int, filter ObjectFilter)
 			continue
 		}
 		if filter.SceneCode != "" && ref.SceneCode != filter.SceneCode {
+			continue
+		}
+		if filter.OwnerType != "" && stringPtrValue(ref.OwnerType) != filter.OwnerType {
+			continue
+		}
+		if filter.OwnerID != "" && stringPtrValue(ref.OwnerID) != filter.OwnerID {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func (r *MemoryRepository) objectHasMatchingUsageRef(fileID int, filter UsageFilter) bool {
+	for _, ref := range r.refs {
+		if ref.FileID != fileID {
+			continue
+		}
+		if ref.Status == model.RefStatusDeleted {
 			continue
 		}
 		if filter.OwnerType != "" && stringPtrValue(ref.OwnerType) != filter.OwnerType {

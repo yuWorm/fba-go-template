@@ -155,6 +155,10 @@ func serviceOptionsFromConfig(configOptions uploadconfig.Options, tokenSecret []
 	if configOptions.DirectUploadPresignTTLSeconds > 0 {
 		options.DirectUploadPresignTTL = time.Duration(configOptions.DirectUploadPresignTTLSeconds) * time.Second
 	}
+	options.MaxTotalBytes = configOptions.MaxTotalBytes
+	options.MaxOwnerBytes = configOptions.MaxOwnerBytes
+	options.MaxTotalFiles = configOptions.MaxTotalFiles
+	options.MaxOwnerFiles = configOptions.MaxOwnerFiles
 	return options
 }
 

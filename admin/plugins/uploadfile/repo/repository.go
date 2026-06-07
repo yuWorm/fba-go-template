@@ -38,6 +38,16 @@ type ShareFilter struct {
 	CreatedBy *int
 }
 
+type UsageFilter struct {
+	OwnerType string
+	OwnerID   string
+}
+
+type UsageStats struct {
+	Files int64
+	Bytes int64
+}
+
 type CreateObjectParam struct {
 	UUID         string
 	StorageCode  string
@@ -134,6 +144,7 @@ type Repository interface {
 	GetObjectByUUID(ctx context.Context, uuid string) (model.FileObject, error)
 	ListObjects(ctx context.Context, filter ObjectFilter, page int, size int) ([]model.FileObject, int64, error)
 	ListPendingObjectsBefore(ctx context.Context, before time.Time) ([]model.FileObject, error)
+	UploadUsage(ctx context.Context, filter UsageFilter) (UsageStats, error)
 	UpdateObjectStatus(ctx context.Context, id int, status string) error
 	CreateRef(ctx context.Context, param CreateRefParam) (model.FileRef, error)
 	GetRef(ctx context.Context, id int) (model.FileRef, error)
