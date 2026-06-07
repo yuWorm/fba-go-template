@@ -49,14 +49,21 @@ func (Module) Register(ctx plugin.Context) error {
 		TokenSecret: []byte(ctx.Config().Auth.JWTSecret),
 	})
 	if err := ctx.Command(command.Command{
-		Use:   "uploadfile cleanup",
-		Short: "Cleanup expired temporary upload files",
-		Run: func(ctx context.Context, runtime command.Runtime, _ []string) error {
-			result, err := svc.CleanupExpiredTemps(ctx)
+		Use:                "uploadfile cleanup",
+		Short:              "Cleanup expired temporary upload files",
+		DisableFlagParsing: true,
+		Run: func(ctx context.Context, runtime command.Runtime, args []string) error {
+			dryRun := false
+			for _, arg := range args {
+				if arg == "--dry-run" {
+					dryRun = true
+				}
+			}
+			result, err := svc.CleanupExpiredTemps(ctx, service.CleanupOptions{DryRun: dryRun})
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(runtime.Output(), "expired_refs=%d deleted_files=%d\n", result.ExpiredRefs, result.DeletedFiles)
+			_, err = fmt.Fprintf(runtime.Output(), "expired_refs=%d deleted_files=%d dry_run=%t\n", result.ExpiredRefs, result.DeletedFiles, dryRun)
 			return err
 		},
 	}); err != nil {

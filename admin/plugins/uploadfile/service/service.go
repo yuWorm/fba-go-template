@@ -70,6 +70,10 @@ type ShareInput struct {
 	Actor        Actor
 }
 
+type CleanupOptions struct {
+	DryRun bool
+}
+
 func New(repository repo.Repository, registry *storage.Registry, opts Options) *Service {
 	if repository == nil {
 		repository = repo.NewMemoryRepository(repo.SeedData())
@@ -406,7 +410,7 @@ func (s *Service) DeleteFiles(ctx context.Context, ids []int, actor Actor) error
 	return nil
 }
 
-func (s *Service) CleanupExpiredTemps(ctx context.Context) (dto.CleanupResult, error) {
+func (s *Service) CleanupExpiredTemps(ctx context.Context, opts CleanupOptions) (dto.CleanupResult, error) {
 	expired, err := s.repo.ListExpiredTempRefs(ctx, s.now())
 	if err != nil {
 		return dto.CleanupResult{}, err
@@ -416,16 +420,21 @@ func (s *Service) CleanupExpiredTemps(ctx context.Context) (dto.CleanupResult, e
 		return result, nil
 	}
 	refIDs := make([]int, 0, len(expired))
-	fileIDs := make(map[int]bool, len(expired))
+	expiredRefIDsByFile := make(map[int]map[int]bool, len(expired))
 	for _, ref := range expired {
 		refIDs = append(refIDs, ref.ID)
-		fileIDs[ref.FileID] = true
+		if expiredRefIDsByFile[ref.FileID] == nil {
+			expiredRefIDsByFile[ref.FileID] = map[int]bool{}
+		}
+		expiredRefIDsByFile[ref.FileID][ref.ID] = true
 	}
-	if err := s.repo.UpdateRefsStatus(ctx, refIDs, model.RefStatusDeleted); err != nil {
-		return dto.CleanupResult{}, err
+	if !opts.DryRun && len(refIDs) > 0 {
+		if err := s.repo.UpdateRefsStatus(ctx, refIDs, model.RefStatusDeleted); err != nil {
+			return dto.CleanupResult{}, err
+		}
 	}
-	for fileID := range fileIDs {
-		remaining, err := s.repo.CountRefsByFileStatus(ctx, fileID, []string{model.RefStatusTemp, model.RefStatusActive})
+	for fileID, expiredRefIDs := range expiredRefIDsByFile {
+		remaining, err := s.countRemainingLiveRefsAfterCleanup(ctx, fileID, expiredRefIDs, opts.DryRun)
 		if err != nil {
 			return dto.CleanupResult{}, err
 		}
@@ -437,6 +446,10 @@ func (s *Service) CleanupExpiredTemps(ctx context.Context) (dto.CleanupResult, e
 			return dto.CleanupResult{}, err
 		}
 		if object.Status == model.StatusDeleted {
+			continue
+		}
+		if opts.DryRun {
+			result.DeletedFiles++
 			continue
 		}
 		backend, err := s.backendForObject(ctx, object)
@@ -452,6 +465,26 @@ func (s *Service) CleanupExpiredTemps(ctx context.Context) (dto.CleanupResult, e
 		result.DeletedFiles++
 	}
 	return result, nil
+}
+
+func (s *Service) countRemainingLiveRefsAfterCleanup(ctx context.Context, fileID int, expiredRefIDs map[int]bool, dryRun bool) (int64, error) {
+	if !dryRun {
+		return s.repo.CountRefsByFileStatus(ctx, fileID, []string{model.RefStatusTemp, model.RefStatusActive})
+	}
+	refs, err := s.refsForFile(ctx, fileID)
+	if err != nil {
+		return 0, err
+	}
+	var remaining int64
+	for _, ref := range refs {
+		if expiredRefIDs[ref.ID] {
+			continue
+		}
+		if ref.Status == model.RefStatusTemp || ref.Status == model.RefStatusActive {
+			remaining++
+		}
+	}
+	return remaining, nil
 }
 
 func (s *Service) OpenPublicFile(ctx context.Context, uuid string) (io.ReadCloser, dto.FileDetail, error) {

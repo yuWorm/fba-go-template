@@ -235,6 +235,42 @@ func TestServiceRejectsNormalUserAccessToForeignOwnedFile(t *testing.T) {
 	}
 }
 
+func TestServiceScopesShareListAndDisableToActor(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := service.New(repository, registry, service.Options{TokenSecret: []byte("test-secret")})
+	owner := service.Actor{UserID: intPtr(7)}
+	other := service.Actor{UserID: intPtr(8)}
+
+	uploaded, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "share.txt",
+		ContentType: "text/plain",
+		Size:        5,
+		Reader:      strings.NewReader("share"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       owner,
+	})
+	if err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+	share, err := svc.CreateShare(ctx, service.ShareInput{FileID: uploaded.File.ID, Actor: owner})
+	if err != nil {
+		t.Fatalf("CreateShare() error = %v", err)
+	}
+	foreign, err := svc.ListShares(ctx, repo.ShareFilter{}, 1, 20, other)
+	if err != nil {
+		t.Fatalf("ListShares(other) error = %v", err)
+	}
+	if len(foreign.Items) != 0 {
+		t.Fatalf("foreign shares = %+v, want empty", foreign)
+	}
+	if err := svc.DisableShare(ctx, share.ID, other); err == nil {
+		t.Fatal("DisableShare() by foreign user succeeded")
+	}
+}
+
 func TestServiceResolvesLocalBackendFromStorageConfig(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -481,7 +517,7 @@ func TestServiceCleansExpiredTemporaryFilesAndKeepsActiveRefs(t *testing.T) {
 	}
 
 	current = current.Add(25 * time.Hour)
-	result, err := svc.CleanupExpiredTemps(ctx)
+	result, err := svc.CleanupExpiredTemps(ctx, service.CleanupOptions{})
 	if err != nil {
 		t.Fatalf("CleanupExpiredTemps() error = %v", err)
 	}
@@ -507,6 +543,44 @@ func TestServiceCleansExpiredTemporaryFilesAndKeepsActiveRefs(t *testing.T) {
 	}
 	if _, err := os.Stat(activePath); err != nil {
 		t.Fatalf("active file should remain: %v", err)
+	}
+}
+
+func TestServiceCleanupExpiredTempsDryRunDoesNotMutate(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC)
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := service.New(repository, registry, service.Options{
+		TokenSecret: []byte("test-secret"),
+		Now:         func() time.Time { return now },
+	})
+	uploaded, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "temp.txt",
+		ContentType: "text/plain",
+		Size:        4,
+		Reader:      strings.NewReader("temp"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       service.Actor{UserID: intPtr(7)},
+	})
+	if err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+	svc = service.New(repository, registry, service.Options{
+		TokenSecret: []byte("test-secret"),
+		Now:         func() time.Time { return now.Add(48 * time.Hour) },
+	})
+	result, err := svc.CleanupExpiredTemps(ctx, service.CleanupOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("CleanupExpiredTemps(dry-run) error = %v", err)
+	}
+	if result.ExpiredRefs != 1 || result.DeletedFiles != 1 {
+		t.Fatalf("dry-run result = %+v, want projected cleanup", result)
+	}
+	ref, err := repository.GetRef(ctx, uploaded.Ref.ID)
+	if err != nil || ref.Status != model.RefStatusTemp {
+		t.Fatalf("ref after dry-run = %+v, %v; want temp", ref, err)
 	}
 }
 

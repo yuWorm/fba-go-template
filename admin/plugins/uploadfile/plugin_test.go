@@ -111,8 +111,22 @@ func TestUploadfilePluginRegistersCleanupCommand(t *testing.T) {
 		t.Fatalf("Execute(uploadfile cleanup) error = %v", err)
 	}
 	output := out.String()
-	if !strings.Contains(output, "expired_refs=0") || !strings.Contains(output, "deleted_files=0") {
+	if !strings.Contains(output, "expired_refs=0") || !strings.Contains(output, "deleted_files=0") || !strings.Contains(output, "dry_run=false") {
 		t.Fatalf("cleanup output = %q, want cleanup counters", output)
+	}
+
+	out.Reset()
+	err = command.Execute(context.Background(), command.ExecuteOptions{
+		Use:      "admin",
+		Runtime:  testCommandRuntime{container: di.New(), out: &out},
+		Commands: ctx.Commands(),
+	}, []string{"uploadfile", "cleanup", "--dry-run"})
+	if err != nil {
+		t.Fatalf("Execute(uploadfile cleanup --dry-run) error = %v", err)
+	}
+	output = out.String()
+	if !strings.Contains(output, "expired_refs=0") || !strings.Contains(output, "deleted_files=0") || !strings.Contains(output, "dry_run=true") {
+		t.Fatalf("cleanup --dry-run output = %q, want dry-run cleanup counters", output)
 	}
 }
 
