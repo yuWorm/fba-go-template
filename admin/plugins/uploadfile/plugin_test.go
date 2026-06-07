@@ -1,9 +1,15 @@
 package uploadfile_test
 
 import (
+	"bytes"
+	"context"
+	"io"
+	"strings"
 	"testing"
 
 	uploadfile "github.com/yuWorm/fba-go-template/admin/plugins/uploadfile"
+	"github.com/yuWorm/fba-go/core/command"
+	"github.com/yuWorm/fba-go/core/config"
 	"github.com/yuWorm/fba-go/core/db"
 	"github.com/yuWorm/fba-go/core/di"
 	"github.com/yuWorm/fba-go/core/plugin"
@@ -86,10 +92,55 @@ func TestUploadfilePluginRegistersMigrationsWhenDBProviderExists(t *testing.T) {
 	}
 }
 
+func TestUploadfilePluginRegistersCleanupCommand(t *testing.T) {
+	ctx := plugin.NewContext(plugin.ContextOptions{})
+	if err := uploadfile.FBAPlugin().Register(ctx); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	var out bytes.Buffer
+	err := command.Execute(context.Background(), command.ExecuteOptions{
+		Use:      "admin",
+		Runtime:  testCommandRuntime{container: di.New(), out: &out},
+		Commands: ctx.Commands(),
+	}, []string{"uploadfile", "cleanup"})
+	if err != nil {
+		t.Fatalf("Execute(uploadfile cleanup) error = %v", err)
+	}
+	output := out.String()
+	if !strings.Contains(output, "expired_refs=0") || !strings.Contains(output, "deleted_files=0") {
+		t.Fatalf("cleanup output = %q, want cleanup counters", output)
+	}
+}
+
 func routeKeys(routes map[string]plugin.Route) []string {
 	keys := make([]string, 0, len(routes))
 	for key := range routes {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+type testCommandRuntime struct {
+	container *di.Container
+	out       io.Writer
+}
+
+func (r testCommandRuntime) Container() *di.Container {
+	return r.container
+}
+
+func (testCommandRuntime) Config() config.Options {
+	return config.Options{}
+}
+
+func (r testCommandRuntime) Output() io.Writer {
+	if r.out == nil {
+		return io.Discard
+	}
+	return r.out
+}
+
+func (testCommandRuntime) ErrorOutput() io.Writer {
+	return io.Discard
 }

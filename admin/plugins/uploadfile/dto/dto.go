@@ -90,6 +90,11 @@ type StorageParam struct {
 	Config    *string `json:"config"`
 }
 
+type CleanupResult struct {
+	ExpiredRefs  int `json:"expired_refs"`
+	DeletedFiles int `json:"deleted_files"`
+}
+
 type ShareDetail struct {
 	ID            int     `json:"id"`
 	FileID        int     `json:"file_id"`

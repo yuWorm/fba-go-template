@@ -323,6 +323,54 @@ func (s *Service) DeleteFiles(ctx context.Context, ids []int) error {
 	return nil
 }
 
+func (s *Service) CleanupExpiredTemps(ctx context.Context) (dto.CleanupResult, error) {
+	expired, err := s.repo.ListExpiredTempRefs(ctx, s.now())
+	if err != nil {
+		return dto.CleanupResult{}, err
+	}
+	result := dto.CleanupResult{ExpiredRefs: len(expired)}
+	if len(expired) == 0 {
+		return result, nil
+	}
+	refIDs := make([]int, 0, len(expired))
+	fileIDs := make(map[int]bool, len(expired))
+	for _, ref := range expired {
+		refIDs = append(refIDs, ref.ID)
+		fileIDs[ref.FileID] = true
+	}
+	if err := s.repo.UpdateRefsStatus(ctx, refIDs, model.RefStatusDeleted); err != nil {
+		return dto.CleanupResult{}, err
+	}
+	for fileID := range fileIDs {
+		remaining, err := s.repo.CountRefsByFileStatus(ctx, fileID, []string{model.RefStatusTemp, model.RefStatusActive})
+		if err != nil {
+			return dto.CleanupResult{}, err
+		}
+		if remaining > 0 {
+			continue
+		}
+		object, err := s.repo.GetObject(ctx, fileID)
+		if err != nil {
+			return dto.CleanupResult{}, err
+		}
+		if object.Status == model.StatusDeleted {
+			continue
+		}
+		backend, err := s.backendForObject(ctx, object)
+		if err != nil {
+			return dto.CleanupResult{}, err
+		}
+		if err := backend.Delete(ctx, object.ObjectKey); err != nil {
+			return dto.CleanupResult{}, err
+		}
+		if err := s.repo.UpdateObjectStatus(ctx, object.ID, model.StatusDeleted); err != nil {
+			return dto.CleanupResult{}, err
+		}
+		result.DeletedFiles++
+	}
+	return result, nil
+}
+
 func (s *Service) OpenPublicFile(ctx context.Context, uuid string) (io.ReadCloser, dto.FileDetail, error) {
 	object, err := s.repo.GetObjectByUUID(ctx, strings.TrimSpace(uuid))
 	if err != nil {
@@ -478,6 +526,25 @@ func (s *Service) backend(ctx context.Context, scene model.Scene) (model.Storage
 		}
 	}
 	return storageConfig, backend, nil
+}
+
+func (s *Service) backendForObject(ctx context.Context, object model.FileObject) (storage.Backend, error) {
+	storageConfig, err := s.repo.GetStorage(ctx, object.StorageCode)
+	if err != nil {
+		return nil, notFound("storage not found", err)
+	}
+	backend, ok := s.storage.Get(storageConfig.Code)
+	if ok {
+		return backend, nil
+	}
+	backend, ok, err = s.storage.Resolve(storageBackendConfig(storageConfig))
+	if err != nil {
+		return nil, badRequest("storage config invalid", err)
+	}
+	if !ok {
+		return nil, notFound("storage backend not found", nil)
+	}
+	return backend, nil
 }
 
 func storageBackendConfig(item model.Storage) storage.BackendConfig {

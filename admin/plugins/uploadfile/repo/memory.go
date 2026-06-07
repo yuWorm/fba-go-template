@@ -307,6 +307,38 @@ func (r *MemoryRepository) ListRefs(_ context.Context, filter RefFilter, page in
 	return paginate(items, page, size)
 }
 
+func (r *MemoryRepository) ListExpiredTempRefs(_ context.Context, now time.Time) ([]model.FileRef, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	items := make([]model.FileRef, 0)
+	for _, item := range r.refs {
+		if item.Status != model.RefStatusTemp || item.ExpiresAt == nil {
+			continue
+		}
+		if item.ExpiresAt.After(now) {
+			continue
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (r *MemoryRepository) CountRefsByFileStatus(_ context.Context, fileID int, statuses []string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	statusSet := make(map[string]bool, len(statuses))
+	for _, status := range statuses {
+		statusSet[status] = true
+	}
+	var count int64
+	for _, item := range r.refs {
+		if item.FileID == fileID && statusSet[item.Status] {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (r *MemoryRepository) BindRefs(_ context.Context, param BindRefsParam) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

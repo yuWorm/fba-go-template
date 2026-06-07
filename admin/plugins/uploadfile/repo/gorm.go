@@ -247,6 +247,24 @@ func (r *GORMRepository) ListRefs(ctx context.Context, filter RefFilter, page in
 	return paginateGORM[model.FileRef](query.Order("id ASC"), page, size)
 }
 
+func (r *GORMRepository) ListExpiredTempRefs(ctx context.Context, now time.Time) ([]model.FileRef, error) {
+	var items []model.FileRef
+	err := r.provider.Read().WithContext(ctx).
+		Where("status = ? AND expires_at IS NOT NULL AND expires_at <= ?", model.RefStatusTemp, now).
+		Order("id ASC").
+		Find(&items).Error
+	return items, err
+}
+
+func (r *GORMRepository) CountRefsByFileStatus(ctx context.Context, fileID int, statuses []string) (int64, error) {
+	var total int64
+	err := r.provider.Read().WithContext(ctx).
+		Model(&model.FileRef{}).
+		Where("file_id = ? AND status IN ?", fileID, statuses).
+		Count(&total).Error
+	return total, err
+}
+
 func (r *GORMRepository) BindRefs(ctx context.Context, param BindRefsParam) error {
 	return r.provider.Transaction(ctx, func(tx *gorm.DB) error {
 		for _, fileID := range param.FileIDs {

@@ -121,6 +121,8 @@ type Repository interface {
 	UpdateObjectStatus(ctx context.Context, id int, status string) error
 	CreateRef(ctx context.Context, param CreateRefParam) (model.FileRef, error)
 	ListRefs(ctx context.Context, filter RefFilter, page int, size int) ([]model.FileRef, int64, error)
+	ListExpiredTempRefs(ctx context.Context, now time.Time) ([]model.FileRef, error)
+	CountRefsByFileStatus(ctx context.Context, fileID int, statuses []string) (int64, error)
 	BindRefs(ctx context.Context, param BindRefsParam) error
 	UpdateRefsStatus(ctx context.Context, ids []int, status string) error
 	CreateShare(ctx context.Context, param CreateShareParam) (model.Share, error)

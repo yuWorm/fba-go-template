@@ -293,6 +293,89 @@ func TestServiceUsesUpdatedStorageConfigAfterPreviousUpload(t *testing.T) {
 	}
 }
 
+func TestServiceCleansExpiredTemporaryFilesAndKeepsActiveRefs(t *testing.T) {
+	ctx := context.Background()
+	current := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: root}))
+	svc := service.New(repository, registry, service.Options{
+		TokenSecret: []byte("test-secret"),
+		Now: func() time.Time {
+			return current
+		},
+	})
+
+	tempUpload, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "temp.txt",
+		ContentType: "text/plain",
+		Size:        4,
+		Reader:      strings.NewReader("temp"),
+		SceneCode:   model.DefaultSceneCode,
+	})
+	if err != nil {
+		t.Fatalf("temp Upload() error = %v", err)
+	}
+	activeUpload, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "active.txt",
+		ContentType: "text/plain",
+		Size:        6,
+		Reader:      strings.NewReader("active"),
+		SceneCode:   model.DefaultSceneCode,
+		SubjectType: "notice",
+		SubjectID:   "1001",
+	})
+	if err != nil {
+		t.Fatalf("active Upload() error = %v", err)
+	}
+	tempObject, err := repository.GetObject(ctx, tempUpload.File.ID)
+	if err != nil {
+		t.Fatalf("GetObject(temp) error = %v", err)
+	}
+	activeObject, err := repository.GetObject(ctx, activeUpload.File.ID)
+	if err != nil {
+		t.Fatalf("GetObject(active) error = %v", err)
+	}
+	tempPath := filepath.Join(root, filepath.FromSlash(tempObject.ObjectKey))
+	activePath := filepath.Join(root, filepath.FromSlash(activeObject.ObjectKey))
+	if _, err := os.Stat(tempPath); err != nil {
+		t.Fatalf("temp file not created: %v", err)
+	}
+	if _, err := os.Stat(activePath); err != nil {
+		t.Fatalf("active file not created: %v", err)
+	}
+
+	current = current.Add(25 * time.Hour)
+	result, err := svc.CleanupExpiredTemps(ctx)
+	if err != nil {
+		t.Fatalf("CleanupExpiredTemps() error = %v", err)
+	}
+	if result.ExpiredRefs != 1 || result.DeletedFiles != 1 {
+		t.Fatalf("CleanupExpiredTemps() = %+v, want 1 expired ref and 1 deleted file", result)
+	}
+	reloadedTemp, err := repository.GetObject(ctx, tempUpload.File.ID)
+	if err != nil {
+		t.Fatalf("GetObject(reloaded temp) error = %v", err)
+	}
+	if reloadedTemp.Status != model.StatusDeleted {
+		t.Fatalf("temp object status = %q, want deleted", reloadedTemp.Status)
+	}
+	reloadedActive, err := repository.GetObject(ctx, activeUpload.File.ID)
+	if err != nil {
+		t.Fatalf("GetObject(reloaded active) error = %v", err)
+	}
+	if reloadedActive.Status != model.StatusActive {
+		t.Fatalf("active object status = %q, want active", reloadedActive.Status)
+	}
+	if _, err := os.Stat(tempPath); !os.IsNotExist(err) {
+		t.Fatalf("temp file stat error = %v, want not exists", err)
+	}
+	if _, err := os.Stat(activePath); err != nil {
+		t.Fatalf("active file should remain: %v", err)
+	}
+}
+
 func TestServiceValidatesSceneExtensionAndSize(t *testing.T) {
 	ctx := context.Background()
 	repository := repo.NewMemoryRepository(repo.SeedData())
