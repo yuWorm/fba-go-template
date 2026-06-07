@@ -60,6 +60,7 @@ func NewRegistry() *Registry {
 	registry := &Registry{backends: map[string]Backend{}, factories: map[string]Factory{}}
 	registry.AddFactory("local", NewLocalFromConfig)
 	registry.AddFactory("s3", NewS3FromConfig)
+	registry.AddFactory("oss", NewOSSFromConfig)
 	return registry
 }
 
