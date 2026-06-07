@@ -242,6 +242,99 @@ func TestServiceRejectsNormalUserAccessToForeignOwnedFile(t *testing.T) {
 	}
 }
 
+func TestServiceListFilesWithForeignOwnerFilterReturnsEmpty(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := service.New(repository, registry, service.Options{TokenSecret: []byte("test-secret")})
+	owner := service.Actor{UserID: intPtr(7)}
+	otherOwnerType := "user"
+	otherOwnerID := "8"
+
+	uploaded, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "owned.txt",
+		ContentType: "text/plain",
+		Size:        5,
+		Reader:      strings.NewReader("owned"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       owner,
+	})
+	if err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+
+	ownFiles, err := svc.ListFiles(ctx, repo.ObjectFilter{}, 1, 20, owner)
+	if err != nil {
+		t.Fatalf("ListFiles(owner) error = %v", err)
+	}
+	if len(ownFiles.Items) != 1 || ownFiles.Items[0].ID != uploaded.File.ID {
+		t.Fatalf("owner files = %+v, want uploaded file", ownFiles)
+	}
+	foreignFiles, err := svc.ListFiles(ctx, repo.ObjectFilter{
+		OwnerType: otherOwnerType,
+		OwnerID:   otherOwnerID,
+	}, 1, 20, owner)
+	if err != nil {
+		t.Fatalf("ListFiles(foreign owner filter) error = %v", err)
+	}
+	if len(foreignFiles.Items) != 0 {
+		t.Fatalf("foreign owner filtered files = %+v, want empty", foreignFiles)
+	}
+
+	foreignRefs, err := svc.ListRefs(ctx, repo.RefFilter{
+		OwnerType: otherOwnerType,
+		OwnerID:   otherOwnerID,
+	}, 1, 20, owner)
+	if err != nil {
+		t.Fatalf("ListRefs(foreign owner filter) error = %v", err)
+	}
+	if len(foreignRefs.Items) != 0 {
+		t.Fatalf("foreign owner filtered refs = %+v, want empty", foreignRefs)
+	}
+}
+
+func TestServiceDeletedRefDoesNotAuthorizeOwnerAccess(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := service.New(repository, registry, service.Options{TokenSecret: []byte("test-secret")})
+	ownerType := "user"
+	ownerID := "7"
+	object, err := repository.CreateObject(ctx, repo.CreateObjectParam{
+		UUID:         "deleted-ref-file",
+		StorageCode:  model.DefaultStorageCode,
+		Provider:     model.ProviderLocal,
+		ObjectKey:    "uploads/default/deleted-ref-file.txt",
+		OriginalName: "deleted-ref-file.txt",
+		Ext:          "txt",
+		Mime:         "text/plain",
+		Size:         4,
+		Visibility:   model.VisibilityPrivate,
+		Status:       model.StatusActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject() error = %v", err)
+	}
+	ref, err := repository.CreateRef(ctx, repo.CreateRefParam{
+		FileID:    object.ID,
+		SceneCode: model.DefaultSceneCode,
+		Status:    model.RefStatusDeleted,
+		OwnerType: &ownerType,
+		OwnerID:   &ownerID,
+	})
+	if err != nil {
+		t.Fatalf("CreateRef() error = %v", err)
+	}
+	if ref.Status != model.RefStatusDeleted {
+		t.Fatalf("ref status = %q, want deleted", ref.Status)
+	}
+	if _, err := svc.GetFile(ctx, object.ID, service.Actor{UserID: intPtr(7)}); err == nil {
+		t.Fatal("GetFile() succeeded through deleted ref owner")
+	}
+}
+
 func TestServiceOpensPrivateFileForOwnerOnly(t *testing.T) {
 	ctx := context.Background()
 	repository := repo.NewMemoryRepository(repo.SeedData())

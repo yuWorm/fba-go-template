@@ -7,6 +7,7 @@ import (
 )
 
 const ownerTypeUser = "user"
+const ownerNoMatch = "__uploadfile_no_owner_match__"
 
 type Actor struct {
 	UserID       *int
@@ -41,11 +42,31 @@ func (a Actor) ownsObject(object model.FileObject, refs []model.FileRef) bool {
 		return true
 	}
 	for _, ref := range refs {
+		if ref.Status == model.RefStatusDeleted {
+			continue
+		}
 		if a.allowsOwner(ref.OwnerType, ref.OwnerID) {
 			return true
 		}
 	}
 	return false
+}
+
+func (a Actor) scopedOwnerFilter(ownerType string, ownerID string) (string, string) {
+	if a.IsSuperAdmin {
+		return ownerType, ownerID
+	}
+	defaultType, defaultID := a.defaultOwner()
+	if defaultType == nil || defaultID == nil {
+		return ownerNoMatch, ownerNoMatch
+	}
+	if ownerType != "" && ownerType != *defaultType {
+		return ownerNoMatch, ownerNoMatch
+	}
+	if ownerID != "" && ownerID != *defaultID {
+		return ownerNoMatch, ownerNoMatch
+	}
+	return *defaultType, *defaultID
 }
 
 func ownerValue(value *string) string {

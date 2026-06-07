@@ -173,6 +173,54 @@ func TestGORMRepositoryPersistsUploadLifecycleAndOwnerFilters(t *testing.T) {
 	}
 }
 
+func TestGORMRepositoryListObjectsIgnoresDeletedRefsForOwnerFilters(t *testing.T) {
+	ctx := context.Background()
+	provider := newSQLiteProvider(t)
+	if err := uploadmigration.AutoMigrate(provider).Up(ctx); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+	if err := uploadmigration.InitialData(provider).Up(ctx); err != nil {
+		t.Fatalf("InitialData() error = %v", err)
+	}
+	repository := repo.NewGORMRepository(provider)
+	object, err := repository.CreateObject(ctx, repo.CreateObjectParam{
+		UUID:         "deleted-ref-object",
+		StorageCode:  model.DefaultStorageCode,
+		Provider:     model.ProviderLocal,
+		ObjectKey:    "uploads/default/deleted-ref-object.txt",
+		OriginalName: "deleted-ref-object.txt",
+		Ext:          "txt",
+		Mime:         "text/plain",
+		Size:         1,
+		Visibility:   model.VisibilityPrivate,
+		Status:       model.StatusActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject() error = %v", err)
+	}
+	if _, err := repository.CreateRef(ctx, repo.CreateRefParam{
+		FileID:    object.ID,
+		SceneCode: model.DefaultSceneCode,
+		Status:    model.RefStatusDeleted,
+		OwnerType: strPtrGORM("user"),
+		OwnerID:   strPtrGORM("7"),
+	}); err != nil {
+		t.Fatalf("CreateRef() error = %v", err)
+	}
+
+	objects, total, err := repository.ListObjects(ctx, repo.ObjectFilter{
+		SceneCode: model.DefaultSceneCode,
+		OwnerType: "user",
+		OwnerID:   "7",
+	}, 1, 20)
+	if err != nil {
+		t.Fatalf("ListObjects() error = %v", err)
+	}
+	if total != 0 || len(objects) != 0 {
+		t.Fatalf("ListObjects() total=%d items=%+v, want empty for deleted ref", total, objects)
+	}
+}
+
 func TestGORMRepositoryManagesScenes(t *testing.T) {
 	ctx := context.Background()
 	provider := newSQLiteProvider(t)

@@ -205,7 +205,7 @@ func (r *GORMRepository) ListObjects(ctx context.Context, filter ObjectFilter, p
 		query = query.Where("uploaded_by = ?", *filter.UploadedBy)
 	}
 	if filter.SceneCode != "" || filter.OwnerType != "" || filter.OwnerID != "" {
-		subquery := r.provider.Read().WithContext(ctx).Model(&model.FileRef{}).Select("file_id")
+		subquery := r.provider.Read().WithContext(ctx).Model(&model.FileRef{}).Select("file_id").Where("status <> ?", model.RefStatusDeleted)
 		if filter.SceneCode != "" {
 			subquery = subquery.Where("scene_code = ?", filter.SceneCode)
 		}

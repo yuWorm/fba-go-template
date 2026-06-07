@@ -280,6 +280,9 @@ func (r *MemoryRepository) objectHasMatchingRef(fileID int, filter ObjectFilter)
 		if ref.FileID != fileID {
 			continue
 		}
+		if ref.Status == model.RefStatusDeleted {
+			continue
+		}
 		if filter.SceneCode != "" && ref.SceneCode != filter.SceneCode {
 			continue
 		}

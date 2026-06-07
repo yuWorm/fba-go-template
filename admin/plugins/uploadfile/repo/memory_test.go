@@ -168,6 +168,47 @@ func TestMemoryRepositoryStoresObjectsRefsAndShares(t *testing.T) {
 	}
 }
 
+func TestMemoryRepositoryListObjectsIgnoresDeletedRefsForOwnerFilters(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	object, err := repository.CreateObject(ctx, repo.CreateObjectParam{
+		UUID:         "deleted-ref-object",
+		StorageCode:  model.DefaultStorageCode,
+		Provider:     model.ProviderLocal,
+		ObjectKey:    "uploads/default/deleted-ref-object.txt",
+		OriginalName: "deleted-ref-object.txt",
+		Ext:          "txt",
+		Mime:         "text/plain",
+		Size:         1,
+		Visibility:   model.VisibilityPrivate,
+		Status:       model.StatusActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject() error = %v", err)
+	}
+	if _, err := repository.CreateRef(ctx, repo.CreateRefParam{
+		FileID:    object.ID,
+		SceneCode: model.DefaultSceneCode,
+		Status:    model.RefStatusDeleted,
+		OwnerType: strPtr("user"),
+		OwnerID:   strPtr("7"),
+	}); err != nil {
+		t.Fatalf("CreateRef() error = %v", err)
+	}
+
+	objects, total, err := repository.ListObjects(ctx, repo.ObjectFilter{
+		SceneCode: model.DefaultSceneCode,
+		OwnerType: "user",
+		OwnerID:   "7",
+	}, 1, 20)
+	if err != nil {
+		t.Fatalf("ListObjects() error = %v", err)
+	}
+	if total != 0 || len(objects) != 0 {
+		t.Fatalf("ListObjects() total=%d items=%+v, want empty for deleted ref", total, objects)
+	}
+}
+
 func strPtr(value string) *string {
 	return &value
 }

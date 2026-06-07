@@ -945,9 +945,7 @@ func scopeObjectFilter(filter repo.ObjectFilter, actor Actor) repo.ObjectFilter 
 	if actor.IsSuperAdmin {
 		return filter
 	}
-	ownerType, ownerID := actor.defaultOwner()
-	filter.OwnerType = ownerValue(ownerType)
-	filter.OwnerID = ownerValue(ownerID)
+	filter.OwnerType, filter.OwnerID = actor.scopedOwnerFilter(filter.OwnerType, filter.OwnerID)
 	return filter
 }
 
@@ -955,9 +953,7 @@ func scopeRefFilter(filter repo.RefFilter, actor Actor) repo.RefFilter {
 	if actor.IsSuperAdmin {
 		return filter
 	}
-	ownerType, ownerID := actor.defaultOwner()
-	filter.OwnerType = ownerValue(ownerType)
-	filter.OwnerID = ownerValue(ownerID)
+	filter.OwnerType, filter.OwnerID = actor.scopedOwnerFilter(filter.OwnerType, filter.OwnerID)
 	return filter
 }
 
