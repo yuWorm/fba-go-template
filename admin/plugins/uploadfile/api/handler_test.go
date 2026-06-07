@@ -144,6 +144,86 @@ func TestUploadAPIUpdatesLocalStorageConfigAndUsesIt(t *testing.T) {
 	}
 }
 
+func TestUploadAPICreatesSceneAndUsesItForUpload(t *testing.T) {
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	root := t.TempDir()
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: root}))
+	svc := uploadservice.New(repository, registry, uploadservice.Options{TokenSecret: []byte("api-test-secret")})
+	app := newUploadApp(t, svc)
+
+	resp, body := requestJSON(t, app, http.MethodPost, "/api/v1/sys/upload/scenes", `{"code":"contract","name":"Contract","max_size":1024,"allowed_exts":"[\"txt\"]","default_storage_code":"local","default_visibility":"private","temp_ttl_seconds":120,"enabled":true}`)
+	assertStatusOK(t, resp)
+	scene := envelopeMap(t, body)
+	if scene["code"] != "contract" || scene["max_size"] != float64(1024) {
+		t.Fatalf("created scene = %v, want contract max_size 1024", scene)
+	}
+
+	resp, body = requestJSON(t, app, http.MethodGet, "/api/v1/sys/upload/scenes", "")
+	assertStatusOK(t, resp)
+	scenes := assertSlice(t, body["data"])
+	found := false
+	for _, raw := range scenes {
+		item := assertMap(t, raw)
+		if item["code"] == "contract" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("contract scene missing from list: %v", scenes)
+	}
+
+	resp, body = requestMultipart(t, app, http.MethodPost, "/api/v1/sys/upload/files", map[string]string{
+		"file": "contract.txt",
+	}, map[string]string{
+		"scene_code": "contract",
+	}, []byte("contract"))
+	assertStatusOK(t, resp)
+	file := assertMap(t, envelopeMap(t, body)["file"])
+	object, err := repository.GetObject(context.Background(), int(file["id"].(float64)))
+	if err != nil {
+		t.Fatalf("GetObject() error = %v", err)
+	}
+	if object.StorageCode != model.DefaultStorageCode || object.Ext != "txt" {
+		t.Fatalf("uploaded object = %+v, want local txt", object)
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(object.ObjectKey))); err != nil {
+		t.Fatalf("contract file not stored under local root: %v", err)
+	}
+}
+
+func TestUploadAPIUpdatesAndDeletesScene(t *testing.T) {
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	svc := uploadservice.New(repository, storage.NewRegistry(), uploadservice.Options{TokenSecret: []byte("api-test-secret")})
+	app := newUploadApp(t, svc)
+
+	resp, body := requestJSON(t, app, http.MethodPost, "/api/v1/sys/upload/scenes", `{"code":"contracts","name":"Contracts","max_size":1024,"allowed_exts":"[\"txt\"]","default_visibility":"private","temp_ttl_seconds":120,"enabled":true}`)
+	assertStatusOK(t, resp)
+	scene := envelopeMap(t, body)
+	if scene["code"] != "contracts" {
+		t.Fatalf("created scene = %v, want contracts", scene)
+	}
+
+	resp, body = requestJSON(t, app, http.MethodPut, "/api/v1/sys/upload/scenes/contracts", `{"name":"Contract Files","max_size":2048,"allowed_exts":"[\"txt\",\"pdf\"]","enabled":false}`)
+	assertStatusOK(t, resp)
+	scene = envelopeMap(t, body)
+	if scene["name"] != "Contract Files" || scene["max_size"] != float64(2048) || scene["enabled"] != false {
+		t.Fatalf("updated scene = %v, want renamed disabled scene", scene)
+	}
+
+	resp, body = requestJSON(t, app, http.MethodDelete, "/api/v1/sys/upload/scenes/contracts", "")
+	assertStatusOK(t, resp)
+
+	resp, body = requestJSON(t, app, http.MethodGet, "/api/v1/sys/upload/scenes", "")
+	assertStatusOK(t, resp)
+	for _, raw := range assertSlice(t, body["data"]) {
+		item := assertMap(t, raw)
+		if item["code"] == "contracts" {
+			t.Fatalf("deleted scene still listed: %v", body)
+		}
+	}
+}
+
 func newUploadApp(t *testing.T, svc *uploadservice.Service) *fiber.App {
 	t.Helper()
 	app := fiber.New(fiber.Config{ErrorHandler: middleware.ErrorHandler})

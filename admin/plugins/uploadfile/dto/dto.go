@@ -65,6 +65,18 @@ type SceneDetail struct {
 	Enabled            bool    `json:"enabled"`
 }
 
+type SceneParam struct {
+	Code               string  `json:"code"`
+	Name               string  `json:"name"`
+	MaxSize            int64   `json:"max_size"`
+	AllowedExts        *string `json:"allowed_exts"`
+	AllowedMimes       *string `json:"allowed_mimes"`
+	DefaultStorageCode *string `json:"default_storage_code"`
+	DefaultVisibility  string  `json:"default_visibility"`
+	TempTTLSeconds     int     `json:"temp_ttl_seconds"`
+	Enabled            *bool   `json:"enabled"`
+}
+
 type StorageDetail struct {
 	Code      string  `json:"code"`
 	Provider  string  `json:"provider"`

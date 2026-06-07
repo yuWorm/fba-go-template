@@ -30,6 +30,48 @@ func (r *GORMRepository) ListScenes(ctx context.Context) ([]model.Scene, error) 
 	return items, err
 }
 
+func (r *GORMRepository) CreateScene(ctx context.Context, param SaveSceneParam) (model.Scene, error) {
+	item := sceneFromParam(0, param)
+	if err := r.provider.Write().WithContext(ctx).Create(&item).Error; err != nil {
+		return model.Scene{}, err
+	}
+	return item, nil
+}
+
+func (r *GORMRepository) UpdateScene(ctx context.Context, code string, param SaveSceneParam) (model.Scene, error) {
+	updates := map[string]any{
+		"code":                 param.Code,
+		"name":                 param.Name,
+		"max_size":             param.MaxSize,
+		"allowed_exts":         param.AllowedExts,
+		"allowed_mimes":        param.AllowedMimes,
+		"default_storage_code": param.DefaultStorageCode,
+		"default_visibility":   param.DefaultVisibility,
+		"temp_ttl_seconds":     param.TempTTLSeconds,
+		"enabled":              param.Enabled,
+		"updated_time":         time.Now(),
+	}
+	result := r.provider.Write().WithContext(ctx).Model(&model.Scene{}).Where("code = ?", code).Updates(updates)
+	if result.Error != nil {
+		return model.Scene{}, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return model.Scene{}, ErrNotFound
+	}
+	return r.GetScene(ctx, param.Code)
+}
+
+func (r *GORMRepository) DeleteScene(ctx context.Context, code string) error {
+	result := r.provider.Write().WithContext(ctx).Where("code = ?", code).Delete(&model.Scene{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *GORMRepository) GetStorage(ctx context.Context, code string) (model.Storage, error) {
 	var item model.Storage
 	err := r.provider.Read().WithContext(ctx).Where("code = ?", code).First(&item).Error

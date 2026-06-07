@@ -153,6 +153,37 @@ func (h Handler) ListScenes(c fiber.Ctx) error {
 	return c.JSON(response.Success(items))
 }
 
+func (h Handler) CreateScene(c fiber.Ctx) error {
+	var param dto.SceneParam
+	if err := c.Bind().Body(&param); err != nil {
+		return err
+	}
+	item, err := h.service.CreateScene(c.RequestCtx(), param)
+	if err != nil {
+		return err
+	}
+	return c.JSON(response.Success(item))
+}
+
+func (h Handler) UpdateScene(c fiber.Ctx) error {
+	var param dto.SceneParam
+	if err := c.Bind().Body(&param); err != nil {
+		return err
+	}
+	item, err := h.service.UpdateScene(c.RequestCtx(), c.Params("code"), param)
+	if err != nil {
+		return err
+	}
+	return c.JSON(response.Success(item))
+}
+
+func (h Handler) DeleteScene(c fiber.Ctx) error {
+	if err := h.service.DeleteScene(c.RequestCtx(), c.Params("code")); err != nil {
+		return err
+	}
+	return c.JSON(response.Success[any](nil))
+}
+
 func (h Handler) ListStorages(c fiber.Ctx) error {
 	items, err := h.service.ListStorages(c.RequestCtx())
 	if err != nil {

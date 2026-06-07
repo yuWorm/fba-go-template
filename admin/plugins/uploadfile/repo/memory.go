@@ -49,6 +49,53 @@ func (r *MemoryRepository) ListScenes(context.Context) ([]model.Scene, error) {
 	return append([]model.Scene(nil), r.scenes...), nil
 }
 
+func (r *MemoryRepository) CreateScene(_ context.Context, param SaveSceneParam) (model.Scene, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item := sceneFromParam(r.nextSceneIDLocked(), param)
+	r.scenes = append(r.scenes, item)
+	return item, nil
+}
+
+func (r *MemoryRepository) UpdateScene(_ context.Context, code string, param SaveSceneParam) (model.Scene, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.scenes {
+		if r.scenes[i].Code != code {
+			continue
+		}
+		item := sceneFromParam(r.scenes[i].ID, param)
+		now := time.Now()
+		item.CreatedTime = r.scenes[i].CreatedTime
+		item.UpdatedTime = &now
+		r.scenes[i] = item
+		return item, nil
+	}
+	return model.Scene{}, ErrNotFound
+}
+
+func (r *MemoryRepository) DeleteScene(_ context.Context, code string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.scenes {
+		if r.scenes[i].Code == code {
+			r.scenes = append(r.scenes[:i], r.scenes[i+1:]...)
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+func (r *MemoryRepository) nextSceneIDLocked() int {
+	maxID := 0
+	for _, item := range r.scenes {
+		if item.ID > maxID {
+			maxID = item.ID
+		}
+	}
+	return maxID + 1
+}
+
 func (r *MemoryRepository) GetStorage(_ context.Context, code string) (model.Storage, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -529,5 +576,21 @@ func storageFromParam(id int, param SaveStorageParam) model.Storage {
 		Enabled:     param.Enabled,
 		Config:      param.Config,
 		CreatedTime: time.Now(),
+	}
+}
+
+func sceneFromParam(id int, param SaveSceneParam) model.Scene {
+	return model.Scene{
+		ID:                 id,
+		Code:               param.Code,
+		Name:               param.Name,
+		MaxSize:            param.MaxSize,
+		AllowedExts:        param.AllowedExts,
+		AllowedMimes:       param.AllowedMimes,
+		DefaultStorageCode: param.DefaultStorageCode,
+		DefaultVisibility:  param.DefaultVisibility,
+		TempTTLSeconds:     param.TempTTLSeconds,
+		Enabled:            param.Enabled,
+		CreatedTime:        time.Now(),
 	}
 }

@@ -144,6 +144,56 @@ func TestGORMRepositoryPersistsUploadLifecycleAndOwnerFilters(t *testing.T) {
 	}
 }
 
+func TestGORMRepositoryManagesScenes(t *testing.T) {
+	ctx := context.Background()
+	provider := newSQLiteProvider(t)
+	if err := uploadmigration.AutoMigrate(provider).Up(ctx); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+	repository := repo.NewGORMRepository(provider)
+
+	scene, err := repository.CreateScene(ctx, repo.SaveSceneParam{
+		Code:               "contract",
+		Name:               "Contract",
+		MaxSize:            1024,
+		AllowedExts:        strPtrGORM(`["txt"]`),
+		DefaultStorageCode: strPtrGORM(model.DefaultStorageCode),
+		DefaultVisibility:  model.VisibilityPrivate,
+		TempTTLSeconds:     120,
+		Enabled:            true,
+	})
+	if err != nil {
+		t.Fatalf("CreateScene() error = %v", err)
+	}
+	if scene.ID == 0 || scene.Code != "contract" {
+		t.Fatalf("created scene = %+v, want id and code contract", scene)
+	}
+
+	scene, err = repository.UpdateScene(ctx, "contract", repo.SaveSceneParam{
+		Code:               "contract",
+		Name:               "Contract Files",
+		MaxSize:            2048,
+		AllowedExts:        strPtrGORM(`["txt","pdf"]`),
+		DefaultStorageCode: strPtrGORM(model.DefaultStorageCode),
+		DefaultVisibility:  model.VisibilityPrivate,
+		TempTTLSeconds:     300,
+		Enabled:            true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateScene() error = %v", err)
+	}
+	if scene.Name != "Contract Files" || scene.MaxSize != 2048 {
+		t.Fatalf("updated scene = %+v, want Contract Files max 2048", scene)
+	}
+
+	if err := repository.DeleteScene(ctx, "contract"); err != nil {
+		t.Fatalf("DeleteScene() error = %v", err)
+	}
+	if _, err := repository.GetScene(ctx, "contract"); err == nil {
+		t.Fatal("GetScene() found deleted scene")
+	}
+}
+
 func newSQLiteProvider(t *testing.T) db.Provider {
 	t.Helper()
 	name := strings.ReplaceAll(t.Name(), "/", "_")

@@ -260,6 +260,46 @@ func (s *Service) ListScenes(ctx context.Context) ([]dto.SceneDetail, error) {
 	return result, nil
 }
 
+func (s *Service) CreateScene(ctx context.Context, param dto.SceneParam) (dto.SceneDetail, error) {
+	save, err := s.sceneParamForCreate(ctx, param)
+	if err != nil {
+		return dto.SceneDetail{}, err
+	}
+	item, err := s.repo.CreateScene(ctx, save)
+	if err != nil {
+		return dto.SceneDetail{}, err
+	}
+	return dto.SceneDetailFromModel(item), nil
+}
+
+func (s *Service) UpdateScene(ctx context.Context, code string, param dto.SceneParam) (dto.SceneDetail, error) {
+	current, err := s.repo.GetScene(ctx, strings.TrimSpace(code))
+	if err != nil {
+		return dto.SceneDetail{}, notFound("upload scene not found", err)
+	}
+	save, err := s.sceneParamForUpdate(ctx, current, param)
+	if err != nil {
+		return dto.SceneDetail{}, err
+	}
+	item, err := s.repo.UpdateScene(ctx, current.Code, save)
+	if err != nil {
+		return dto.SceneDetail{}, err
+	}
+	return dto.SceneDetailFromModel(item), nil
+}
+
+func (s *Service) DeleteScene(ctx context.Context, code string) error {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return badRequest("scene code is required", nil)
+	}
+	switch code {
+	case model.DefaultSceneCode, model.SceneAvatar, model.SceneAttachment:
+		return badRequest("seed upload scene cannot be deleted", nil)
+	}
+	return s.repo.DeleteScene(ctx, code)
+}
+
 func (s *Service) ListStorages(ctx context.Context) ([]dto.StorageDetail, error) {
 	items, err := s.repo.ListStorages(ctx)
 	if err != nil {
@@ -558,6 +598,94 @@ func storageBackendConfig(item model.Storage) storage.BackendConfig {
 		Prefix:   item.Prefix,
 		Config:   item.Config,
 	}
+}
+
+func (s *Service) sceneParamForCreate(ctx context.Context, param dto.SceneParam) (repo.SaveSceneParam, error) {
+	code := strings.TrimSpace(param.Code)
+	if code == "" {
+		return repo.SaveSceneParam{}, badRequest("scene code is required", nil)
+	}
+	name := strings.TrimSpace(param.Name)
+	if name == "" {
+		name = code
+	}
+	maxSize := param.MaxSize
+	if maxSize <= 0 {
+		return repo.SaveSceneParam{}, badRequest("scene max_size must be positive", nil)
+	}
+	tempTTL := param.TempTTLSeconds
+	if tempTTL <= 0 {
+		tempTTL = 24 * 60 * 60
+	}
+	visibility := defaultString(strings.TrimSpace(param.DefaultVisibility), model.VisibilityPrivate)
+	if visibility != model.VisibilityPrivate && visibility != model.VisibilityPublic {
+		return repo.SaveSceneParam{}, badRequest("scene visibility is not supported", nil)
+	}
+	if err := validateJSONArray(param.AllowedExts, "allowed_exts"); err != nil {
+		return repo.SaveSceneParam{}, err
+	}
+	if err := validateJSONArray(param.AllowedMimes, "allowed_mimes"); err != nil {
+		return repo.SaveSceneParam{}, err
+	}
+	defaultStorageCode := cleanOptional(param.DefaultStorageCode)
+	if defaultStorageCode != nil {
+		if _, err := s.repo.GetStorage(ctx, *defaultStorageCode); err != nil {
+			return repo.SaveSceneParam{}, notFound("storage not found", err)
+		}
+	}
+	return repo.SaveSceneParam{
+		Code:               code,
+		Name:               name,
+		MaxSize:            maxSize,
+		AllowedExts:        cleanOptional(param.AllowedExts),
+		AllowedMimes:       cleanOptional(param.AllowedMimes),
+		DefaultStorageCode: defaultStorageCode,
+		DefaultVisibility:  visibility,
+		TempTTLSeconds:     tempTTL,
+		Enabled:            boolValue(param.Enabled, true),
+	}, nil
+}
+
+func (s *Service) sceneParamForUpdate(ctx context.Context, current model.Scene, param dto.SceneParam) (repo.SaveSceneParam, error) {
+	if strings.TrimSpace(param.Code) == "" {
+		param.Code = current.Code
+	}
+	if strings.TrimSpace(param.Name) == "" {
+		param.Name = current.Name
+	}
+	if param.MaxSize <= 0 {
+		param.MaxSize = current.MaxSize
+	}
+	if param.AllowedExts == nil {
+		param.AllowedExts = current.AllowedExts
+	}
+	if param.AllowedMimes == nil {
+		param.AllowedMimes = current.AllowedMimes
+	}
+	if param.DefaultStorageCode == nil {
+		param.DefaultStorageCode = current.DefaultStorageCode
+	}
+	if strings.TrimSpace(param.DefaultVisibility) == "" {
+		param.DefaultVisibility = current.DefaultVisibility
+	}
+	if param.TempTTLSeconds <= 0 {
+		param.TempTTLSeconds = current.TempTTLSeconds
+	}
+	if param.Enabled == nil {
+		param.Enabled = &current.Enabled
+	}
+	return s.sceneParamForCreate(ctx, param)
+}
+
+func validateJSONArray(value *string, field string) error {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		return nil
+	}
+	var items []string
+	if err := json.Unmarshal([]byte(*value), &items); err != nil {
+		return badRequest(field+" must be a JSON string array", err)
+	}
+	return nil
 }
 
 func storageParamForCreate(param dto.StorageParam) (repo.SaveStorageParam, error) {

@@ -105,9 +105,24 @@ type SaveStorageParam struct {
 	Config    *string
 }
 
+type SaveSceneParam struct {
+	Code               string
+	Name               string
+	MaxSize            int64
+	AllowedExts        *string
+	AllowedMimes       *string
+	DefaultStorageCode *string
+	DefaultVisibility  string
+	TempTTLSeconds     int
+	Enabled            bool
+}
+
 type Repository interface {
 	GetScene(ctx context.Context, code string) (model.Scene, error)
 	ListScenes(ctx context.Context) ([]model.Scene, error)
+	CreateScene(ctx context.Context, param SaveSceneParam) (model.Scene, error)
+	UpdateScene(ctx context.Context, code string, param SaveSceneParam) (model.Scene, error)
+	DeleteScene(ctx context.Context, code string) error
 	GetStorage(ctx context.Context, code string) (model.Storage, error)
 	GetDefaultStorage(ctx context.Context) (model.Storage, error)
 	ListStorages(ctx context.Context) ([]model.Storage, error)
