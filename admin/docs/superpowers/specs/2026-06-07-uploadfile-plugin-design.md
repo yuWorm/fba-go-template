@@ -1,7 +1,7 @@
 # Uploadfile Plugin Design
 
 Date: 2026-06-07
-Status: Draft
+Status: Approved for implementation
 
 ## Goal
 
@@ -380,8 +380,10 @@ Disables share.
 Public:
 
 - `GET /public/upload/shares/:token`: returns share metadata without file bytes.
-- `POST /public/upload/shares/:token/verify`: validates password and returns a short-lived access marker or just success for first version.
-- `GET /public/upload/shares/:token/download`: validates status, expiration, password requirement, and download count, then streams file or redirects to presigned URL later.
+- `POST /public/upload/shares/:token/verify`: validates password and returns a short-lived `download_token`.
+- `GET /public/upload/shares/:token/download`: downloads shares that do not require a password, or password-protected shares when a valid `download_token` is provided.
+
+The first implementation should avoid Redis/session dependencies by generating a signed, short-lived `download_token` that contains the share token, expiration time, and password hash version. The service validates that token before streaming the file. Later versions can replace this with Redis-backed access sessions if needed.
 
 ## Cleanup
 
@@ -407,7 +409,9 @@ Initial permission codes:
 
 Route policy:
 
-- Upload and ref queries require `plugin.Auth()`.
+- Upload requires `plugin.Auth()` and `plugin.Perm("sys:uploadfile:upload")`.
+- Bind requires `plugin.Auth()` and `plugin.Perm("sys:uploadfile:bind")`.
+- Ref queries require `plugin.Auth()` so business pages can load their attachments without requiring every scene to mint a separate RBAC permission.
 - Admin list/detail/delete/share management require `plugin.Auth()` and matching permission.
 - Public share routes are not authenticated but must validate token, password, expiration, status, and max downloads.
 
@@ -472,16 +476,10 @@ Deferred:
 11. Add targeted tests.
 12. Run `make L=1 test`.
 
-## Open Decisions
+## Implementation Decisions
 
-- Whether `uploadfile` should be auto-injected by default in `internal/app/register.go` immediately.
-- Whether the existing admin `/sys/files/upload` route should remain unchanged in the first implementation.
-- Whether scene and storage seed data should include menu rows in addition to database rows.
-- Whether `owner_type/owner_id` should be accepted on first-version upload requests or only set internally.
-
-Recommended defaults:
-
-- Auto-inject the plugin after implementation tests pass.
-- Leave `/sys/files/upload` unchanged for first implementation.
-- Seed storage and scenes; add permission/menu seed only if current admin menu conventions can be followed safely.
-- Accept owner fields only for authenticated admin callers and validate basic shape, but do not enforce ACL from them yet.
+- Auto-inject the plugin in `internal/app/register.go` once implementation tests pass.
+- Leave the existing admin `/sys/files/upload` route unchanged in the first implementation.
+- Seed `upload_storage` and `upload_scene` through plugin migration/seed data.
+- Do not seed admin menu rows in the first implementation. This avoids coupling uploadfile migrations to admin menu table assumptions beyond the optional admin dependency. Permission enforcement can still be tested with superuser/current RBAC test users. Admin menu integration can be added in a focused follow-up.
+- Accept `owner_type` and `owner_id` on first-version upload and bind requests, validate them as simple strings, and store them on refs. Do not enforce ACL from owner values yet.
