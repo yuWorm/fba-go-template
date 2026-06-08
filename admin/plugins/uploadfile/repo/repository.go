@@ -39,8 +39,12 @@ type ShareFilter struct {
 }
 
 type UsageFilter struct {
-	OwnerType string
-	OwnerID   string
+	SceneCode   string
+	Provider    string
+	StorageCode string
+	Status      string
+	OwnerType   string
+	OwnerID     string
 }
 
 type UsageStats struct {

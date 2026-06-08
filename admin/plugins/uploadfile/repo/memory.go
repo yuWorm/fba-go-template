@@ -283,7 +283,16 @@ func (r *MemoryRepository) UploadUsage(_ context.Context, filter UsageFilter) (U
 		if item.Status == model.StatusDeleted {
 			continue
 		}
-		if (filter.OwnerType != "" || filter.OwnerID != "") && !r.objectHasMatchingUsageRef(item.ID, filter) {
+		if filter.Provider != "" && item.Provider != filter.Provider {
+			continue
+		}
+		if filter.StorageCode != "" && item.StorageCode != filter.StorageCode {
+			continue
+		}
+		if filter.Status != "" && item.Status != filter.Status {
+			continue
+		}
+		if (filter.SceneCode != "" || filter.OwnerType != "" || filter.OwnerID != "") && !r.objectHasMatchingUsageRef(item.ID, filter) {
 			continue
 		}
 		stats.Files++
@@ -320,6 +329,9 @@ func (r *MemoryRepository) objectHasMatchingUsageRef(fileID int, filter UsageFil
 			continue
 		}
 		if ref.Status == model.RefStatusDeleted {
+			continue
+		}
+		if filter.SceneCode != "" && ref.SceneCode != filter.SceneCode {
 			continue
 		}
 		if filter.OwnerType != "" && stringPtrValue(ref.OwnerType) != filter.OwnerType {

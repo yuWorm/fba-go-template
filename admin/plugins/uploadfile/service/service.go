@@ -505,6 +505,15 @@ func (s *Service) ListFiles(ctx context.Context, filter repo.ObjectFilter, page 
 	return pagination.NewPageData(result, total, page, size, "/api/v1/upload/files"), nil
 }
 
+func (s *Service) UploadStats(ctx context.Context, filter repo.UsageFilter, actor Actor) (dto.UploadStats, error) {
+	filter = scopeUsageFilter(filter, actor)
+	stats, err := s.repo.UploadUsage(ctx, filter)
+	if err != nil {
+		return dto.UploadStats{}, err
+	}
+	return dto.UploadStats{Files: stats.Files, Bytes: stats.Bytes}, nil
+}
+
 func (s *Service) GetFile(ctx context.Context, id int, actor Actor) (dto.FileDetail, error) {
 	object, _, err := s.ensureObjectAccess(ctx, id, actor)
 	if err != nil {
@@ -1020,6 +1029,14 @@ func scopeObjectFilter(filter repo.ObjectFilter, actor Actor) repo.ObjectFilter 
 }
 
 func scopeRefFilter(filter repo.RefFilter, actor Actor) repo.RefFilter {
+	if actor.IsSuperAdmin {
+		return filter
+	}
+	filter.OwnerType, filter.OwnerID = actor.scopedOwnerFilter(filter.OwnerType, filter.OwnerID)
+	return filter
+}
+
+func scopeUsageFilter(filter repo.UsageFilter, actor Actor) repo.UsageFilter {
 	if actor.IsSuperAdmin {
 		return filter
 	}

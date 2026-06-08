@@ -127,6 +127,11 @@ type CleanupResult struct {
 	DeletedFiles int `json:"deleted_files"`
 }
 
+type UploadStats struct {
+	Files int64 `json:"files"`
+	Bytes int64 `json:"bytes"`
+}
+
 type ShareDetail struct {
 	ID            int     `json:"id"`
 	FileID        int     `json:"file_id"`

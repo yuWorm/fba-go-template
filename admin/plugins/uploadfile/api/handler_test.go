@@ -305,6 +305,51 @@ func TestUploadAPIScopesFilesAndSharesByOwnerForNormalUsers(t *testing.T) {
 	}
 }
 
+func TestUploadAPIStatsScopesByOwner(t *testing.T) {
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := uploadservice.New(repository, registry, uploadservice.Options{TokenSecret: []byte("api-test-secret")})
+	ownerApp := newUploadAppWithUser(t, svc, uploadUser(7, "owner"))
+	otherApp := newUploadAppWithUser(t, svc, uploadUser(8, "other"))
+	adminApp := newUploadAppWithUser(t, svc, &rbac.CurrentUser{ID: 1, Username: "admin", IsStaff: true, IsSuperAdmin: true})
+
+	resp, body := requestMultipart(t, ownerApp, http.MethodPost, "/api/v1/sys/upload/files", map[string]string{
+		"file": "owner.txt",
+	}, map[string]string{
+		"scene_code": "default",
+	}, []byte("owner"))
+	assertStatusOK(t, resp)
+
+	resp, body = requestMultipart(t, otherApp, http.MethodPost, "/api/v1/sys/upload/files", map[string]string{
+		"file": "other.txt",
+	}, map[string]string{
+		"scene_code": "default",
+	}, []byte("other!!"))
+	assertStatusOK(t, resp)
+
+	resp, body = requestJSON(t, ownerApp, http.MethodGet, "/api/v1/sys/upload/stats", "")
+	assertStatusOK(t, resp)
+	stats := envelopeMap(t, body)
+	if stats["files"] != float64(1) || stats["bytes"] != float64(5) {
+		t.Fatalf("owner stats = %v, want 1 file and 5 bytes", stats)
+	}
+
+	resp, body = requestJSON(t, ownerApp, http.MethodGet, "/api/v1/sys/upload/stats?owner_type=user&owner_id=8", "")
+	assertStatusOK(t, resp)
+	stats = envelopeMap(t, body)
+	if stats["files"] != float64(0) || stats["bytes"] != float64(0) {
+		t.Fatalf("foreign stats = %v, want zero", stats)
+	}
+
+	resp, body = requestJSON(t, adminApp, http.MethodGet, "/api/v1/sys/upload/stats", "")
+	assertStatusOK(t, resp)
+	stats = envelopeMap(t, body)
+	if stats["files"] != float64(2) || stats["bytes"] != float64(12) {
+		t.Fatalf("admin stats = %v, want 2 files and 12 bytes", stats)
+	}
+}
+
 func TestUploadAPIAccessTokenRejectsTTLAboveMax(t *testing.T) {
 	repository := repo.NewMemoryRepository(repo.SeedData())
 	registry := storage.NewRegistry()

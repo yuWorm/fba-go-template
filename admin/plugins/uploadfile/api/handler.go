@@ -163,6 +163,21 @@ func (h Handler) ListFiles(c fiber.Ctx) error {
 	return c.JSON(response.Success(data))
 }
 
+func (h Handler) UploadStats(c fiber.Ctx) error {
+	stats, err := h.service.UploadStats(c.RequestCtx(), repo.UsageFilter{
+		SceneCode:   c.Query("scene_code"),
+		Provider:    c.Query("provider"),
+		StorageCode: c.Query("storage_code"),
+		Status:      c.Query("status"),
+		OwnerType:   c.Query("owner_type"),
+		OwnerID:     c.Query("owner_id"),
+	}, actor(c))
+	if err != nil {
+		return err
+	}
+	return c.JSON(response.Success(stats))
+}
+
 func (h Handler) GetFile(c fiber.Ctx) error {
 	id, err := parseID(c.Params("pk"))
 	if err != nil {

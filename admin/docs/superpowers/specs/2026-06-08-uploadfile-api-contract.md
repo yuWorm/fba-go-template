@@ -133,6 +133,32 @@ Response:
 }
 ```
 
+### Upload Stats
+
+`GET /api/v1/sys/upload/stats`
+
+Auth: required.
+
+Supports filters:
+
+- `scene_code`
+- `provider`
+- `storage_code`
+- `status`
+- `owner_type`
+- `owner_id`
+
+Response:
+
+```json
+{
+  "files": 2,
+  "bytes": 12
+}
+```
+
+Normal users are scoped to their own owner usage. Super admins can query global usage or any owner filter.
+
 ## Public File APIs
 
 ### Public File Download

@@ -302,6 +302,115 @@ func TestMemoryRepositoryUploadUsageCountsLiveObjectsAndDistinctOwnerRefs(t *tes
 	}
 }
 
+func TestMemoryRepositoryUploadUsageFilters(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	defaultObject, err := repository.CreateObject(ctx, repo.CreateObjectParam{
+		UUID:         "stats-default",
+		StorageCode:  model.DefaultStorageCode,
+		Provider:     model.ProviderLocal,
+		ObjectKey:    "uploads/default/stats-default.txt",
+		OriginalName: "stats-default.txt",
+		Ext:          "txt",
+		Mime:         "text/plain",
+		Size:         5,
+		Visibility:   model.VisibilityPrivate,
+		Status:       model.StatusActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject(default) error = %v", err)
+	}
+	archiveObject, err := repository.CreateObject(ctx, repo.CreateObjectParam{
+		UUID:         "stats-archive",
+		StorageCode:  "archive",
+		Provider:     model.ProviderS3,
+		ObjectKey:    "uploads/avatar/stats-archive.png",
+		OriginalName: "stats-archive.png",
+		Ext:          "png",
+		Mime:         "image/png",
+		Size:         3,
+		Visibility:   model.VisibilityPrivate,
+		Status:       model.StatusActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject(archive) error = %v", err)
+	}
+	pendingObject, err := repository.CreateObject(ctx, repo.CreateObjectParam{
+		UUID:         "stats-pending",
+		StorageCode:  model.DefaultStorageCode,
+		Provider:     model.ProviderLocal,
+		ObjectKey:    "uploads/default/stats-pending.txt",
+		OriginalName: "stats-pending.txt",
+		Ext:          "txt",
+		Mime:         "text/plain",
+		Size:         7,
+		Visibility:   model.VisibilityPrivate,
+		Status:       model.StatusPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject(pending) error = %v", err)
+	}
+	deletedRefObject, err := repository.CreateObject(ctx, repo.CreateObjectParam{
+		UUID:         "stats-deleted-ref",
+		StorageCode:  model.DefaultStorageCode,
+		Provider:     model.ProviderLocal,
+		ObjectKey:    "uploads/default/stats-deleted-ref.txt",
+		OriginalName: "stats-deleted-ref.txt",
+		Ext:          "txt",
+		Mime:         "text/plain",
+		Size:         11,
+		Visibility:   model.VisibilityPrivate,
+		Status:       model.StatusActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject(deleted ref) error = %v", err)
+	}
+	deletedObject, err := repository.CreateObject(ctx, repo.CreateObjectParam{
+		UUID:         "stats-deleted-object",
+		StorageCode:  model.DefaultStorageCode,
+		Provider:     model.ProviderLocal,
+		ObjectKey:    "uploads/default/stats-deleted-object.txt",
+		OriginalName: "stats-deleted-object.txt",
+		Ext:          "txt",
+		Mime:         "text/plain",
+		Size:         13,
+		Visibility:   model.VisibilityPrivate,
+		Status:       model.StatusDeleted,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject(deleted object) error = %v", err)
+	}
+	refs := []repo.CreateRefParam{
+		{FileID: defaultObject.ID, SceneCode: model.DefaultSceneCode, Status: model.RefStatusActive, OwnerType: strPtr("user"), OwnerID: strPtr("7")},
+		{FileID: archiveObject.ID, SceneCode: model.SceneAvatar, Status: model.RefStatusActive, OwnerType: strPtr("user"), OwnerID: strPtr("7")},
+		{FileID: pendingObject.ID, SceneCode: model.DefaultSceneCode, Status: model.RefStatusActive, OwnerType: strPtr("user"), OwnerID: strPtr("8")},
+		{FileID: deletedRefObject.ID, SceneCode: model.DefaultSceneCode, Status: model.RefStatusDeleted, OwnerType: strPtr("user"), OwnerID: strPtr("7")},
+		{FileID: deletedObject.ID, SceneCode: model.DefaultSceneCode, Status: model.RefStatusActive, OwnerType: strPtr("user"), OwnerID: strPtr("7")},
+	}
+	for i, ref := range refs {
+		if _, err := repository.CreateRef(ctx, ref); err != nil {
+			t.Fatalf("CreateRef(%d) error = %v", i, err)
+		}
+	}
+
+	assertUsage(t, repository, repo.UsageFilter{SceneCode: model.DefaultSceneCode}, 2, 12)
+	assertUsage(t, repository, repo.UsageFilter{SceneCode: model.DefaultSceneCode, OwnerType: "user", OwnerID: "7"}, 1, 5)
+	assertUsage(t, repository, repo.UsageFilter{StorageCode: model.DefaultStorageCode}, 3, 23)
+	assertUsage(t, repository, repo.UsageFilter{Provider: model.ProviderS3}, 1, 3)
+	assertUsage(t, repository, repo.UsageFilter{Status: model.StatusPending}, 1, 7)
+}
+
+func assertUsage(t *testing.T, repository repo.Repository, filter repo.UsageFilter, wantFiles int64, wantBytes int64) {
+	t.Helper()
+	stats, err := repository.UploadUsage(context.Background(), filter)
+	if err != nil {
+		t.Fatalf("UploadUsage(%+v) error = %v", filter, err)
+	}
+	if stats.Files != wantFiles || stats.Bytes != wantBytes {
+		t.Fatalf("UploadUsage(%+v) = %+v, want files=%d bytes=%d", filter, stats, wantFiles, wantBytes)
+	}
+}
+
 func strPtr(value string) *string {
 	return &value
 }

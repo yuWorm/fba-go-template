@@ -1130,6 +1130,57 @@ func TestServiceRejectsPresignWhenOwnerFileQuotaExceeded(t *testing.T) {
 	}
 }
 
+func TestServiceUploadStatsScopesNormalUserAndAdmin(t *testing.T) {
+	ctx := context.Background()
+	repository := repo.NewMemoryRepository(repo.SeedData())
+	registry := storage.NewRegistry()
+	registry.Add(model.DefaultStorageCode, storage.NewLocal(storage.LocalOptions{Root: t.TempDir()}))
+	svc := service.New(repository, registry, service.Options{TokenSecret: []byte("test-secret")})
+
+	if _, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "owner.txt",
+		ContentType: "text/plain",
+		Size:        5,
+		Reader:      strings.NewReader("owner"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       service.Actor{UserID: intPtr(7)},
+	}); err != nil {
+		t.Fatalf("owner Upload() error = %v", err)
+	}
+	if _, err := svc.Upload(ctx, service.UploadInput{
+		Filename:    "other.txt",
+		ContentType: "text/plain",
+		Size:        7,
+		Reader:      strings.NewReader("other!!"),
+		SceneCode:   model.DefaultSceneCode,
+		Actor:       service.Actor{UserID: intPtr(8)},
+	}); err != nil {
+		t.Fatalf("other Upload() error = %v", err)
+	}
+
+	ownerStats, err := svc.UploadStats(ctx, repo.UsageFilter{}, service.Actor{UserID: intPtr(7)})
+	if err != nil {
+		t.Fatalf("UploadStats(owner) error = %v", err)
+	}
+	if ownerStats.Files != 1 || ownerStats.Bytes != 5 {
+		t.Fatalf("owner stats = %+v, want 1 file and 5 bytes", ownerStats)
+	}
+	foreignStats, err := svc.UploadStats(ctx, repo.UsageFilter{OwnerType: "user", OwnerID: "8"}, service.Actor{UserID: intPtr(7)})
+	if err != nil {
+		t.Fatalf("UploadStats(foreign) error = %v", err)
+	}
+	if foreignStats.Files != 0 || foreignStats.Bytes != 0 {
+		t.Fatalf("foreign stats = %+v, want zero", foreignStats)
+	}
+	adminStats, err := svc.UploadStats(ctx, repo.UsageFilter{}, service.Actor{UserID: intPtr(1), IsSuperAdmin: true})
+	if err != nil {
+		t.Fatalf("UploadStats(admin) error = %v", err)
+	}
+	if adminStats.Files != 2 || adminStats.Bytes != 12 {
+		t.Fatalf("admin stats = %+v, want 2 files and 12 bytes", adminStats)
+	}
+}
+
 func TestServiceValidatesSceneExtensionAndSize(t *testing.T) {
 	ctx := context.Background()
 	repository := repo.NewMemoryRepository(repo.SeedData())

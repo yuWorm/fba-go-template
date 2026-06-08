@@ -231,8 +231,20 @@ func (r *GORMRepository) ListPendingObjectsBefore(ctx context.Context, before ti
 
 func (r *GORMRepository) UploadUsage(ctx context.Context, filter UsageFilter) (UsageStats, error) {
 	query := r.provider.Read().WithContext(ctx).Model(&model.FileObject{}).Where("status <> ?", model.StatusDeleted)
-	if filter.OwnerType != "" || filter.OwnerID != "" {
+	if filter.Provider != "" {
+		query = query.Where("provider = ?", filter.Provider)
+	}
+	if filter.StorageCode != "" {
+		query = query.Where("storage_code = ?", filter.StorageCode)
+	}
+	if filter.Status != "" {
+		query = query.Where("status = ?", filter.Status)
+	}
+	if filter.SceneCode != "" || filter.OwnerType != "" || filter.OwnerID != "" {
 		subquery := r.provider.Read().WithContext(ctx).Model(&model.FileRef{}).Select("DISTINCT file_id").Where("status <> ?", model.RefStatusDeleted)
+		if filter.SceneCode != "" {
+			subquery = subquery.Where("scene_code = ?", filter.SceneCode)
+		}
 		if filter.OwnerType != "" {
 			subquery = subquery.Where("owner_type = ?", filter.OwnerType)
 		}
