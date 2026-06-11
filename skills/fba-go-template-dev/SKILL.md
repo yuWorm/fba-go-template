@@ -11,9 +11,10 @@ Use this skill to keep generated projects reproducible, release-safe, and aligne
 
 1. Identify the template surface: embedded `basic`, local admin template, remote Git template behavior, or release documentation.
 2. Keep runnable template files and generated template files intentionally different only where needed. `admin/go.mod` is local-runnable; `admin/go.mod.tmpl` is generated-project output.
-3. Preserve `[[ .Module ]]`, `[[ .TemplateModule ]]`, `[[ .CoreVersion ]]`, and `[[ .CoreReplace ]]` semantics.
+3. Preserve `[[ .Module ]]`, `[[ .TemplateModule ]]`, template origin fields, `[[ .CoreVersion ]]`, and `[[ .CoreReplace ]]` semantics.
 4. For Python-aligned admin behavior, compare `sources/fastapi-best-architecture/` before changing routes, models, migrations, or seed data.
-5. Verify both the scaffold package and an actual generated project.
+5. When adding, removing, or moving template-owned app/plugin source, update `fbago.yaml.tmpl` managed entries in the same change.
+6. Verify both the scaffold package and an actual generated project.
 
 ## Load References
 
@@ -28,6 +29,9 @@ Use this skill to keep generated projects reproducible, release-safe, and aligne
 - Do not copy repository metadata or local build artifacts into generated projects.
 - Do not remove `.fbago-template.yaml`; it is required to rewrite runnable template imports.
 - Keep remote template examples pinned to release tags when documenting production usage.
+- Do not change the `internal/app` business layout to support template updates. Use root `.fbago.yaml` managed entries to record what is template-owned.
+- Do not let template update commands silently overwrite project business changes. Modified or removed managed files must require explicit force unless a future baseline-hash mechanism proves they are still template-clean.
+- Respect project-side `mode: manual`, `mode: ignore`, and `mode: detached` managed entries as escape hatches that stop template diff/update from touching that path.
 
 ## Verification
 
@@ -37,3 +41,5 @@ Run targeted scaffold tests and template tests. For admin template changes, also
 GOWORK=off GOCACHE=/private/tmp/fba-go-gocache go test ./cmd/fbago ./cmd/fbago/internal/scaffold
 make -C templates/fba-go-template/admin L=1 test
 ```
+
+After manifest or sync behavior changes, also generate an admin project, run its tests, and confirm `fbago template diff --template templates/fba-go-template/admin` reports no changes.

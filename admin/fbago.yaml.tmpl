@@ -1,0 +1,61 @@
+version: 1
+
+template:
+  name: admin
+  module: [[ .Module ]]
+  source_module: [[ .TemplateModule ]]
+  source: [[ .TemplateSource ]]
+[[ if .TemplateRepo ]]  repo: [[ .TemplateRepo ]]
+[[ end ]][[ if .TemplateRef ]]  ref: [[ .TemplateRef ]]
+[[ end ]][[ if .TemplateCommit ]]  commit: [[ .TemplateCommit ]]
+[[ end ]][[ if .TemplatePath ]]  template_path: [[ .TemplatePath ]]
+[[ end ]]  core_version: [[ .CoreVersion ]]
+
+managed:
+  - name: admin
+    kind: app
+    mode: source
+    path: internal/app/admin
+    source_path: internal/app/admin
+
+  - name: config
+    kind: app
+    mode: source
+    path: internal/app/config
+    source_path: internal/app/config
+
+  - name: dict
+    kind: app
+    mode: source
+    path: internal/app/dict
+    source_path: internal/app/dict
+
+  - name: notice
+    kind: app
+    mode: source
+    path: internal/app/notice
+    source_path: internal/app/notice
+
+  - name: email
+    kind: plugin
+    mode: source
+    path: plugins/email
+    source_path: plugins/email
+
+  - name: oauth2
+    kind: plugin
+    mode: source
+    path: plugins/oauth2
+    source_path: plugins/oauth2
+
+  - name: task
+    kind: plugin
+    mode: source
+    path: plugins/task
+    source_path: plugins/task
+
+  - name: uploadfile
+    kind: plugin
+    mode: source
+    path: plugins/uploadfile
+    source_path: plugins/uploadfile
