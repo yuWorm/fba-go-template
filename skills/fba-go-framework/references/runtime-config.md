@@ -20,6 +20,11 @@ This mirrors Python settings behavior: deployment environment values override ch
 - API base path: `/api/v1`
 - timezone: `Asia/Shanghai`
 - environment: `dev`
+- request ID middleware enabled
+- recover middleware enabled with stack capture
+- access log middleware enabled, skipping `/healthz`, `/readyz`, and `/metrics`
+- error log middleware enabled for HTTP 500 errors
+- internal error response details enabled in `dev` and hidden outside `dev`
 - CORS enabled unless explicitly disabled
 - CORS origins: `http://127.0.0.1`, `http://localhost:5173`
 - CORS credentials: enabled
@@ -80,6 +85,19 @@ CORS:
 - `CORS_EXPOSE_HEADERS`
 - `CORS_ALLOW_CREDENTIALS`
 
+HTTP diagnostics and logging:
+
+- `MIDDLEWARE_REQUEST_ID`
+- `MIDDLEWARE_RECOVER`
+- `MIDDLEWARE_RECOVER_STACK_TRACE`
+- `MIDDLEWARE_ACCESS_LOG`
+- `MIDDLEWARE_ACCESS_LOG_SKIP_PATHS`
+- `MIDDLEWARE_ERROR_LOG`
+- `ERROR_RESPONSE_INCLUDE_DETAIL`
+- `LOG_STD_LEVEL` or `LOG_LEVEL`
+- `LOG_ACCESS_FILENAME`
+- `LOG_ERROR_FILENAME`
+
 Realtime:
 
 - `REALTIME_DISABLED`
@@ -111,6 +129,10 @@ If `Database.Driver` and `Database.WriteDSN` are empty, runtime does not open a 
 `fiberx.New` installs Fiber's CORS middleware only when `opts.CORS.Enabled` is true. Default behavior is enabled and Python-compatible.
 
 Do not add per-plugin CORS logic. CORS is an application-level concern.
+
+## HTTP Diagnostics
+
+`fiberx.New` installs request ID, HTTP logging, recover, and CORS middleware from application-level config. Request IDs feed the `trace_id` response field and both access/error logs. Error responses keep production-safe messages unless `ERROR_RESPONSE_INCLUDE_DETAIL=true`; server logs still record the original error detail for HTTP 500 responses.
 
 ## Realtime
 
